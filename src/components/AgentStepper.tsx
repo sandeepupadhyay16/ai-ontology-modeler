@@ -78,12 +78,12 @@ export default function AgentStepper({ stages, activeStage, isExecuting }: Agent
 
           if (isDone) {
             bg = '#f0fdf4';
-            border = '#bbf7d0';
+            border = '#86efac';
             textColor = '#15803d';
           } else if (isRunning) {
-            bg = '#eff6ff';
-            border = '#93c5fd';
-            textColor = '#1d4ed8';
+            bg = '#dbeafe';
+            border = '#2563eb';
+            textColor = '#1e40af';
           } else if (isFailed) {
             bg = '#fef2f2';
             border = '#fca5a5';
@@ -100,10 +100,16 @@ export default function AgentStepper({ stages, activeStage, isExecuting }: Agent
                 justifyContent: 'center',
                 padding: '8px 6px',
                 borderRadius: '8px',
-                border: `1px solid ${border}`,
+                border: isRunning ? `2px solid ${border}` : `1px solid ${border}`,
                 background: bg,
                 textAlign: 'center',
-                transition: 'all 0.15s ease',
+                transition: 'all 0.2s ease',
+                boxShadow: isRunning
+                  ? '0 0 14px rgba(37,99,235,0.4), 0 2px 4px rgba(37,99,235,0.1)'
+                  : isDone
+                  ? '0 1px 2px rgba(22,163,74,0.08)'
+                  : 'none',
+                transform: isRunning ? 'scale(1.03)' : 'scale(1)',
               }}
             >
               <div style={{ marginBottom: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

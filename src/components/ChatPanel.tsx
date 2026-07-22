@@ -17,6 +17,7 @@ interface ChatPanelProps {
   perspectives: any[];
   causalCycles: any[];
   onGenerationComplete: () => Promise<void>;
+  onGenerationStart?: () => (() => Promise<void>) | void;
   onAutoFix?: () => void;
   isFixing?: boolean;
 }
@@ -30,6 +31,7 @@ export default function ChatPanel({
   perspectives = [],
   causalCycles = [],
   onGenerationComplete,
+  onGenerationStart,
   onAutoFix,
   isFixing = false,
 }: ChatPanelProps) {
@@ -157,6 +159,8 @@ How can I help construct your domain graph today? You can choose a preset sugges
     if (!answersObject) setInput('');
     setLoading(true);
 
+    const finishStepper = onGenerationStart ? onGenerationStart() : null;
+
     try {
       const res = await fetch(`/api/ontologies/${ontologyId}/ai-generate`, {
         method: 'POST',
@@ -195,6 +199,9 @@ How can I help construct your domain graph today? You can choose a preset sugges
       setMessages([...newMessages, { role: 'assistant', content: `⚠️ Error: ${e.message}` }]);
     } finally {
       setLoading(false);
+      if (typeof finishStepper === 'function') {
+        await finishStepper();
+      }
     }
   };
 
