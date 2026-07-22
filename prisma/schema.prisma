@@ -1,0 +1,331 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Project {
+  id                 String            @id @default(uuid())
+  name               String            @unique
+  description        String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  businessFunctionId String?
+  ontologies         Ontology[]
+  businessFunction   BusinessFunction? @relation(fields: [businessFunctionId], references: [id])
+}
+
+model Ontology {
+  id                  String               @id @default(uuid())
+  name                String
+  namespaceUri        String               @unique
+  layer               String               @default("PROJECT")
+  version             String               @default("1.0.0")
+  description         String?
+  projectId           String?
+  businessFunctionId  String?
+  organizationId      String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  businessFunction    String?
+  industry            String?
+  objective           String?
+  aiMissions          String[]             @default([])
+  tags                String[]             @default([])
+  businessProcessId   String?
+  causalCycles        CausalCycle[]
+  competencyQuestions CompetencyQuestion[]
+  concepts            Concept[]
+  constraints         Constraint[]
+  contextPacks        ContextPack[]
+  driverTrees         DriverTree[]
+  businessProcess     BusinessProcess?     @relation(fields: [businessProcessId], references: [id])
+  project             Project?             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  businessFunctionRel BusinessFunction?    @relation("FunctionOntologies", fields: [businessFunctionId], references: [id], onDelete: Cascade)
+  organization        Organization?        @relation("OrgOntologies", fields: [organizationId], references: [id], onDelete: Cascade)
+  perspectives        Perspective[]
+  relationships       Relationship[]
+  rules               Rule[]
+}
+
+model Concept {
+  id                  String         @id @default(uuid())
+  label               String
+  conceptType         String         @default("Entity")
+  typeFields          Json?
+  ontologyId          String
+  createdAt           DateTime       @default(now())
+  attributes          Attribute[]
+  ontology            Ontology       @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+  mappings            DataMapping[]
+  personaPerspectives Perspective[]  @relation("PersonaPerspective")
+  sourceRel           Relationship[] @relation("SourceConcept")
+  targetRel           Relationship[] @relation("TargetConcept")
+  perspectives        Perspective[]  @relation("PerspectiveConcepts")
+}
+
+model Attribute {
+  id          String  @id @default(uuid())
+  name        String
+  datatype    String  @default("string")
+  description String?
+  required    Boolean @default(false)
+  conceptId   String
+  concept     Concept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+}
+
+model Relationship {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  cardinality String   @default("one-to-many")
+  sourceId    String
+  targetId    String
+  ontologyId  String
+  ontology    Ontology @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+  source      Concept  @relation("SourceConcept", fields: [sourceId], references: [id], onDelete: Cascade)
+  target      Concept  @relation("TargetConcept", fields: [targetId], references: [id], onDelete: Cascade)
+}
+
+model Constraint {
+  id          String   @id @default(uuid())
+  name        String
+  kind        String
+  params      Json?
+  description String?
+  ontologyId  String
+  ontology    Ontology @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+}
+
+model Rule {
+  id          String   @id @default(uuid())
+  name        String
+  kind        String
+  antecedent  Json?
+  consequent  Json?
+  description String?
+  ontologyId  String
+  ontology    Ontology @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+}
+
+model CompetencyQuestion {
+  id          String   @id @default(uuid())
+  question    String
+  status      String   @default("Draft")
+  remediation String?
+  ontologyId  String
+  ontology    Ontology @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+}
+
+model DriverTree {
+  id         String       @id @default(uuid())
+  name       String
+  ontologyId String
+  edges      DriverEdge[]
+  ontology   Ontology     @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+}
+
+model DriverEdge {
+  id       String        @id @default(uuid())
+  name     String
+  sourceId String
+  targetId String
+  treeId   String
+  polarity String        @default("+")
+  weight   Float         @default(1.0)
+  tree     DriverTree    @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  cycles   CausalCycle[] @relation("CycleEdges")
+}
+
+model PromptTemplate {
+  id               String   @id @default(uuid())
+  industry         String
+  domain           String
+  businessFunction String
+  objective        String
+  description      String?
+  causalCycles     Json
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([industry, domain, businessFunction])
+}
+
+model Perspective {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  personaId   String?
+  ontologyId  String
+  createdAt   DateTime  @default(now())
+  ontology    Ontology  @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+  persona     Concept?  @relation("PersonaPerspective", fields: [personaId], references: [id], onDelete: Cascade)
+  concepts    Concept[] @relation("PerspectiveConcepts")
+}
+
+model CausalCycle {
+  id          String       @id @default(uuid())
+  name        String
+  cycleType   String       @default("REINFORCING")
+  description String?
+  ontologyId  String
+  createdAt   DateTime     @default(now())
+  ontology    Ontology     @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+  edges       DriverEdge[] @relation("CycleEdges")
+}
+
+model Organization {
+  id                String             @id @default(uuid())
+  name              String             @unique
+  industry          String?
+  description       String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  businessFunctions BusinessFunction[]
+  ontologies        Ontology[]         @relation("OrgOntologies")
+}
+
+model BusinessFunction {
+  id                String            @id @default(uuid())
+  name              String
+  category          String            @default("CORE")
+  description       String?
+  organizationId    String
+  createdAt         DateTime          @default(now())
+  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  businessProcesses BusinessProcess[]
+  projects          Project[]
+  ontologies        Ontology[]        @relation("FunctionOntologies")
+}
+
+model BusinessProcess {
+  id                 String            @id @default(uuid())
+  name               String
+  description        String?
+  parentId           String?
+  businessFunctionId String
+  createdAt          DateTime          @default(now())
+  businessFunction   BusinessFunction  @relation(fields: [businessFunctionId], references: [id], onDelete: Cascade)
+  parent             BusinessProcess?  @relation("ProcessHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children           BusinessProcess[] @relation("ProcessHierarchy")
+  ontologies         Ontology[]
+  solutions          SolutionLink[]
+  systems            SystemLink[]
+}
+
+model BusinessSolution {
+  id              String               @id @default(uuid())
+  name            String
+  description     String?
+  status          String               @default("Active")
+  businessOwnerId String?
+  itOwnerId       String?
+  createdAt       DateTime             @default(now())
+  capabilities    BusinessCapability[]
+  businessOwner   SolutionOwner?       @relation("BizOwner", fields: [businessOwnerId], references: [id])
+  itOwner         SolutionOwner?       @relation("ITOwner", fields: [itOwnerId], references: [id])
+  processLinks    SolutionLink[]
+}
+
+model BusinessCapability {
+  id          String           @id @default(uuid())
+  name        String
+  description String?
+  solutionId  String
+  solution    BusinessSolution @relation(fields: [solutionId], references: [id], onDelete: Cascade)
+}
+
+model SolutionOwner {
+  id                String             @id @default(uuid())
+  name              String
+  role              String
+  team              String?
+  email             String?
+  bizOwnedSolutions BusinessSolution[] @relation("BizOwner")
+  itOwnedSolutions  BusinessSolution[] @relation("ITOwner")
+}
+
+model SolutionLink {
+  id         String           @id @default(uuid())
+  processId  String
+  solutionId String
+  process    BusinessProcess  @relation(fields: [processId], references: [id], onDelete: Cascade)
+  solution   BusinessSolution @relation(fields: [solutionId], references: [id], onDelete: Cascade)
+
+  @@unique([processId, solutionId])
+}
+
+model System {
+  id           String       @id @default(uuid())
+  name         String       @unique
+  systemType   String       @default("OPERATIONAL")
+  vendor       String?
+  description  String?
+  createdAt    DateTime     @default(now())
+  dataSources  DataSource[]
+  processLinks SystemLink[]
+}
+
+model SystemLink {
+  id        String          @id @default(uuid())
+  processId String
+  systemId  String
+  role      String          @default("RUNS")
+  process   BusinessProcess @relation(fields: [processId], references: [id], onDelete: Cascade)
+  system    System          @relation(fields: [systemId], references: [id], onDelete: Cascade)
+
+  @@unique([processId, systemId])
+}
+
+model DataSource {
+  id            String        @id @default(uuid())
+  name          String
+  platform      String
+  connectionRef String?
+  systemId      String?
+  createdAt     DateTime      @default(now())
+  mappings      DataMapping[]
+  system        System?       @relation(fields: [systemId], references: [id])
+}
+
+model DataMapping {
+  id             String     @id @default(uuid())
+  conceptId      String
+  dataSourceId   String
+  columnOrField  String?
+  transformation String?
+  confidence     Float      @default(1.0)
+  status         String     @default("Proposed")
+  concept        Concept    @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  dataSource     DataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+
+  @@unique([conceptId, dataSourceId])
+}
+
+model ContextPack {
+  id          String   @id @default(uuid())
+  name        String
+  version     String   @default("0.1.0")
+  ontologyId  String
+  scope       Json
+  contents    Json
+  gapAnalysis Json?
+  status      String   @default("Draft")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  ontology    Ontology @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+}
+
+model LlmConfiguration {
+  id        String   @id @default(uuid())
+  name      String
+  provider  String
+  apiKey    String?
+  baseUrl   String?
+  modelName String
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
