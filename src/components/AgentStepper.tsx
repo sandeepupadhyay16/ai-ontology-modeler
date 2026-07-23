@@ -32,53 +32,34 @@ export default function AgentStepper({ stages, activeStage, isExecuting }: Agent
       style={{
         background: '#ffffff',
         border: '1px solid #e2e8f0',
-        borderRadius: '12px',
-        padding: '12px 16px',
-        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
-        marginBottom: '10px',
+        borderRadius: '8px',
+        padding: '4px 10px',
+        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.03)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Sparkles style={{ width: '16px', height: '16px', color: '#2563eb' }} />
-          <h3 style={{ fontSize: '12px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#0f172a' }}>
-            5-Stage Agentic Quality Pipeline
-          </h3>
-        </div>
-        {isExecuting && (
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '11px',
-              fontWeight: '700',
-              color: '#2563eb',
-              background: '#eff6ff',
-              padding: '4px 10px',
-              borderRadius: '20px',
-              border: '1px solid #bfdbfe',
-            }}
-          >
-            <Loader2 style={{ width: '13px', height: '13px', animation: 'spin 1s linear infinite' }} />
-            Executing Agents...
-          </span>
-        )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+        <Sparkles style={{ width: '13px', height: '13px', color: '#2563eb' }} />
+        <span style={{ fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#334155', whiteSpace: 'nowrap' }}>
+          Agent Pipeline:
+        </span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
-        {currentStages.map((s) => {
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
+        {currentStages.map((s, idx) => {
           const isDone = s.status === 'COMPLETED';
           const isRunning = s.status === 'RUNNING' || (isExecuting && s.stage === activeStage);
           const isFailed = s.status === 'FAILED';
 
           let bg = '#f8fafc';
           let border = '#e2e8f0';
-          let textColor = '#475569';
+          let textColor = '#64748b';
 
           if (isDone) {
             bg = '#f0fdf4';
-            border = '#86efac';
+            border = '#bbf7d0';
             textColor = '#15803d';
           } else if (isRunning) {
             bg = '#dbeafe';
@@ -91,63 +72,73 @@ export default function AgentStepper({ stages, activeStage, isExecuting }: Agent
           }
 
           return (
-            <div
-              key={s.stage}
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '8px 6px',
-                borderRadius: '8px',
-                border: isRunning ? `2px solid ${border}` : `1px solid ${border}`,
-                background: bg,
-                textAlign: 'center',
-                transition: 'all 0.2s ease',
-                boxShadow: isRunning
-                  ? '0 0 14px rgba(37,99,235,0.4), 0 2px 4px rgba(37,99,235,0.1)'
-                  : isDone
-                  ? '0 1px 2px rgba(22,163,74,0.08)'
-                  : 'none',
-                transform: isRunning ? 'scale(1.03)' : 'scale(1)',
-              }}
-            >
-              <div style={{ marginBottom: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {isDone ? (
-                  <CheckCircle2 style={{ width: '16px', height: '16px', color: '#16a34a' }} />
-                ) : isRunning ? (
-                  <Loader2 style={{ width: '16px', height: '16px', color: '#2563eb', animation: 'spin 1s linear infinite' }} />
-                ) : isFailed ? (
-                  <AlertTriangle style={{ width: '16px', height: '16px', color: '#dc2626' }} />
-                ) : (
-                  <div
-                    style={{
-                      width: '18px',
-                      height: '18px',
-                      borderRadius: '50%',
-                      border: '1px solid #cbd5e1',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '10px',
-                      fontWeight: '700',
-                      color: '#94a3b8',
-                    }}
-                  >
-                    {s.stage}
-                  </div>
+            <React.Fragment key={s.stage}>
+              <div
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '3px 8px',
+                  borderRadius: '6px',
+                  border: isRunning ? `1.5px solid ${border}` : `1px solid ${border}`,
+                  background: bg,
+                  boxShadow: isRunning ? '0 0 8px rgba(37,99,235,0.3)' : 'none',
+                  transition: 'all 0.15s ease',
+                  minWidth: 0,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  {isDone ? (
+                    <CheckCircle2 style={{ width: '13px', height: '13px', color: '#16a34a' }} />
+                  ) : isRunning ? (
+                    <Loader2 style={{ width: '13px', height: '13px', color: '#2563eb', animation: 'spin 1s linear infinite' }} />
+                  ) : isFailed ? (
+                    <AlertTriangle style={{ width: '13px', height: '13px', color: '#dc2626' }} />
+                  ) : (
+                    <span style={{ fontSize: '10px', fontWeight: '800', color: '#94a3b8' }}>{s.stage}</span>
+                  )}
+                </div>
+
+                <span style={{ fontSize: '10px', fontWeight: '700', color: textColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {s.name}
+                </span>
+
+                {(s.durationMs || isRunning) && (
+                  <span style={{ fontSize: '9px', fontWeight: '600', color: isRunning ? '#2563eb' : '#94a3b8', marginLeft: 'auto', flexShrink: 0 }}>
+                    {s.durationMs ? `${(s.durationMs / 1000).toFixed(1)}s` : isRunning ? 'active' : ''}
+                  </span>
                 )}
               </div>
-              <span style={{ fontSize: '11px', fontWeight: '700', color: textColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>
-                {s.name}
-              </span>
-              <span style={{ fontSize: '9px', fontWeight: '600', color: '#94a3b8', marginTop: '2px' }}>
-                {s.durationMs ? `${(s.durationMs / 1000).toFixed(1)}s` : isDone ? 'Done' : isRunning ? 'Active' : 'Pending'}
-              </span>
-            </div>
+
+              {idx < currentStages.length - 1 && (
+                <div style={{ width: '8px', height: '1px', background: '#cbd5e1', flexShrink: 0 }} />
+              )}
+            </React.Fragment>
           );
         })}
       </div>
+
+      {isExecuting && (
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+            fontSize: '10px',
+            fontWeight: '700',
+            color: '#2563eb',
+            background: '#eff6ff',
+            padding: '2px 8px',
+            borderRadius: '12px',
+            border: '1px solid #bfdbfe',
+            flexShrink: 0,
+          }}
+        >
+          <Loader2 style={{ width: '11px', height: '11px', animation: 'spin 1s linear infinite' }} />
+          Running
+        </span>
+      )}
     </div>
   );
 }

@@ -69,7 +69,7 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { name, description, namespaceUri, version, layer, industry, businessFunction, objective } = body;
+    const { name, description, namespaceUri, version, layer, industry, businessFunction, objective, businessSolution, businessProcessName } = body;
 
     const data: any = {};
     if (name !== undefined) {
@@ -86,6 +86,8 @@ export async function PATCH(
     if (industry !== undefined) data.industry = industry?.trim() || null;
     if (businessFunction !== undefined) data.businessFunction = businessFunction?.trim() || null;
     if (objective !== undefined) data.objective = objective?.trim() || null;
+    if (businessSolution !== undefined) data.businessSolution = businessSolution?.trim() || null;
+    if (businessProcessName !== undefined) data.businessProcessName = businessProcessName?.trim() || null;
     if (body.businessProcessId !== undefined) data.businessProcessId = body.businessProcessId || null;
 
     const ontology = await db.ontology.update({

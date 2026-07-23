@@ -188,7 +188,16 @@ How can I help construct your domain graph today? You can choose a preset sugges
         setOriginalPrompt('');
       }
 
-      let botReply = data.summary || 'Ontology graph successfully updated.';
+      let botReply = '';
+      if (typeof data.summary === 'string') {
+        botReply = data.summary;
+      } else if (typeof data.summary === 'object' && data.summary !== null) {
+        const s = data.summary;
+        botReply = `✨ **Ontology Model Updated!**\n\n- **Concepts Created**: ${s.conceptsCreated || 0}\n- **Relationships Created**: ${s.relationshipsCreated || 0}\n- **Competency Questions**: ${s.cqsCreated || 0}\n- **Persona Perspectives**: ${s.perspectivesCreated || 0}\n- **Causal Cycles**: ${s.causalCyclesCreated || 0}`;
+      } else {
+        botReply = 'Ontology graph successfully updated.';
+      }
+
       if (data.createdConcepts?.length > 0) {
         botReply += `\n\n**Added Concepts (${data.createdConcepts.length})**: ${data.createdConcepts.map((c: any) => c.label).join(', ')}`;
       }
@@ -292,7 +301,7 @@ How can I help construct your domain graph today? You can choose a preset sugges
       </div>
 
       {/* Preset Suggestions Bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', borderBottom: '1px solid #e2e8f0', overflowX: 'auto', background: '#ffffff', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', borderBottom: '1px solid #e2e8f0', overflowX: 'auto', background: '#ffffff', flexShrink: 0 }}>
         <span style={{ fontSize: '11px', fontWeight: '800', color: '#2563eb', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px' }}>
           <Sparkles style={{ width: '12px', height: '12px' }} /> Presets:
         </span>
@@ -321,32 +330,34 @@ How can I help construct your domain graph today? You can choose a preset sugges
         </div>
       </div>
 
-      {/* Messages Scroll Area */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      {/* Messages Scroll Area - Expanded Vertical Space */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px', background: '#f8fafc' }}>
         {messages.map((msg, idx) => (
           <div
             key={idx}
             style={{
-              maxWidth: '85%',
-              padding: '10px 14px',
-              borderRadius: '10px',
+              maxWidth: '92%',
+              padding: '12px 16px',
+              borderRadius: '12px',
               fontSize: '12px',
-              lineHeight: '1.5',
+              lineHeight: '1.6',
               whiteSpace: 'pre-wrap',
               alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-              background: msg.role === 'user' ? '#2563eb' : '#f8fafc',
+              background: msg.role === 'user' ? '#2563eb' : '#ffffff',
               color: msg.role === 'user' ? '#ffffff' : '#0f172a',
               border: msg.role === 'user' ? 'none' : '1px solid #e2e8f0',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+              boxShadow: msg.role === 'user' ? '0 2px 6px rgba(37,99,235,0.2)' : '0 1px 4px rgba(0,0,0,0.04)',
             }}
           >
-            {msg.content}
+            {typeof msg.content === 'string'
+              ? msg.content
+              : (typeof msg.content === 'object' && msg.content ? JSON.stringify(msg.content, null, 2) : String(msg.content))}
           </div>
         ))}
         {loading && (
-          <div style={{ alignSelf: 'flex-start', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '8px 12px', borderRadius: '8px', fontSize: '11px', color: '#1d4ed8', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Loader style={{ width: '13px', height: '13px', animation: 'spin 1s linear infinite' }} />
-            AI Modeler is executing schema transformation...
+          <div style={{ alignSelf: 'flex-start', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '10px 14px', borderRadius: '10px', fontSize: '12px', color: '#1d4ed8', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 1px 4px rgba(37,99,235,0.08)' }}>
+            <Loader style={{ width: '14px', height: '14px', animation: 'spin 1s linear infinite' }} />
+            <span>AI Modeler is executing schema transformation...</span>
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -380,42 +391,50 @@ How can I help construct your domain graph today? You can choose a preset sugges
         </div>
       )}
 
-      {/* Input Bar with Smart Prompt Generator Button */}
+      {/* Multi-line Ready Prompt Input Bar */}
       <form
         onSubmit={(e) => { e.preventDefault(); handleSend(input.trim()); }}
-        style={{ padding: '10px 16px', borderTop: '1px solid #e2e8f0', background: '#f8fafc', display: 'flex', gap: '8px', flexShrink: 0 }}
+        style={{ padding: '12px 14px', borderTop: '1px solid #e2e8f0', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}
       >
-        <input
-          type="text"
+        <textarea
           className="form-input"
           placeholder={guidanceMode === 'INTERACTIVE' ? 'Ask question or input topic for Guided Interview...' : 'Enter prompt instructions for Direct Execution...'}
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleSend(input.trim());
+            }
+          }}
           disabled={loading}
-          style={{ fontSize: '12px', flex: 1, borderRadius: '8px', padding: '8px 12px' }}
+          rows={2}
+          style={{ fontSize: '12px', width: '100%', borderRadius: '8px', padding: '8px 12px', resize: 'vertical', minHeight: '52px', maxHeight: '140px', lineHeight: '1.4' }}
         />
 
-        {/* Smart Prompt Enhancer Button */}
-        <button
-          type="button"
-          onClick={handleEnhancePrompt}
-          disabled={loading || !input.trim()}
-          className="btn-secondary"
-          title="Optimize & Expand Prompt via AI"
-          style={{ padding: '8px 12px', fontSize: '11px', fontWeight: '700', color: '#7c3aed', background: '#f3e8ff', borderColor: '#d8b4fe', borderRadius: '8px' }}
-        >
-          <Sparkles style={{ width: '13px', height: '13px' }} />
-          <span>⚡ Enhance Prompt</span>
-        </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {/* Smart Prompt Enhancer Button */}
+          <button
+            type="button"
+            onClick={handleEnhancePrompt}
+            disabled={loading || !input.trim()}
+            className="btn-secondary"
+            title="Optimize & Expand Prompt via AI"
+            style={{ padding: '6px 12px', fontSize: '11px', fontWeight: '700', color: '#7c3aed', background: '#f3e8ff', borderColor: '#d8b4fe', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}
+          >
+            <Sparkles style={{ width: '13px', height: '13px' }} />
+            <span>⚡ Enhance Prompt</span>
+          </button>
 
-        <button
-          type="submit"
-          className="btn-primary"
-          disabled={loading || !input.trim()}
-          style={{ padding: '8px 14px', borderRadius: '8px', fontSize: '12px' }}
-        >
-          <Send style={{ width: '13px', height: '13px' }} /> Send
-        </button>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={loading || !input.trim()}
+            style={{ padding: '6px 16px', borderRadius: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '700' }}
+          >
+            <Send style={{ width: '13px', height: '13px' }} /> Send
+          </button>
+        </div>
       </form>
     </div>
   );

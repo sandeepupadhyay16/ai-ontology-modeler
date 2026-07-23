@@ -32,9 +32,12 @@ model Ontology {
   businessFunction    String?
   industry            String?
   objective           String?
+  businessSolution    String?
+  businessProcessName String?
   aiMissions          String[]             @default([])
   tags                String[]             @default([])
   businessProcessId   String?
+  owlAxioms           Json?
   causalCycles        CausalCycle[]
   competencyQuestions CompetencyQuestion[]
   concepts            Concept[]
@@ -52,13 +55,17 @@ model Ontology {
 
 model Concept {
   id                  String         @id @default(uuid())
+  uri                 String?
   label               String
   conceptType         String         @default("Entity")
   typeFields          Json?
+  parentConceptId     String?
   ontologyId          String
   createdAt           DateTime       @default(now())
   attributes          Attribute[]
   ontology            Ontology       @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+  parentConcept       Concept?       @relation("ConceptHierarchy", fields: [parentConceptId], references: [id], onDelete: SetNull)
+  subConcepts         Concept[]      @relation("ConceptHierarchy")
   mappings            DataMapping[]
   personaPerspectives Perspective[]  @relation("PersonaPerspective")
   sourceRel           Relationship[] @relation("SourceConcept")
@@ -68,6 +75,7 @@ model Concept {
 
 model Attribute {
   id          String  @id @default(uuid())
+  uri         String?
   name        String
   datatype    String  @default("string")
   description String?
@@ -77,16 +85,18 @@ model Attribute {
 }
 
 model Relationship {
-  id          String   @id @default(uuid())
-  name        String
-  description String?
-  cardinality String   @default("one-to-many")
-  sourceId    String
-  targetId    String
-  ontologyId  String
-  ontology    Ontology @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
-  source      Concept  @relation("SourceConcept", fields: [sourceId], references: [id], onDelete: Cascade)
-  target      Concept  @relation("TargetConcept", fields: [targetId], references: [id], onDelete: Cascade)
+  id           String   @id @default(uuid())
+  uri          String?
+  name         String
+  description  String?
+  cardinality  String   @default("one-to-many")
+  propertyType String   @default("ObjectProperty")
+  sourceId     String
+  targetId     String
+  ontologyId   String
+  ontology     Ontology @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+  source       Concept  @relation("SourceConcept", fields: [sourceId], references: [id], onDelete: Cascade)
+  target       Concept  @relation("TargetConcept", fields: [targetId], references: [id], onDelete: Cascade)
 }
 
 model Constraint {
@@ -94,6 +104,7 @@ model Constraint {
   name        String
   kind        String
   params      Json?
+  shaclShape  Json?
   description String?
   ontologyId  String
   ontology    Ontology @relation(fields: [ontologyId], references: [id], onDelete: Cascade)

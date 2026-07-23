@@ -1,6 +1,5 @@
-'use client';
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Building2, Factory, Sparkles, Layers, Lightbulb, ShieldCheck, ChevronRight, AlertCircle, FileQuestion, HelpCircle } from 'lucide-react';
 import { OntologyQualityReport } from '@/lib/qualityEvaluator';
 
@@ -18,10 +17,21 @@ interface LineageBreadcrumbProps {
   qualityReport?: OntologyQualityReport | null;
   onSelectNode?: (type: 'ORG' | 'FUNC' | 'MISSION' | 'PROCESS' | 'SOLUTION' | 'ONTOLOGY', data: any) => void;
   compact?: boolean;
+  onQualityModalChange?: (isOpen: boolean) => void;
 }
 
-export default function LineageBreadcrumb({ lineage, qualityReport, onSelectNode, compact = false }: LineageBreadcrumbProps) {
+export default function LineageBreadcrumb({ lineage, qualityReport, onSelectNode, compact = false, onQualityModalChange }: LineageBreadcrumbProps) {
   const [showIssuesPopover, setShowIssuesPopover] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const toggleModal = (val: boolean) => {
+    setShowIssuesPopover(val);
+    if (onQualityModalChange) onQualityModalChange(val);
+  };
 
   const {
     organization,
@@ -214,7 +224,7 @@ export default function LineageBreadcrumb({ lineage, qualityReport, onSelectNode
 
         {/* Health Score Pill */}
         <div
-          onClick={() => setShowIssuesPopover(!showIssuesPopover)}
+          onClick={() => toggleModal(!showIssuesPopover)}
           style={{
             padding: '3px 10px',
             borderRadius: '16px',
@@ -275,7 +285,7 @@ export default function LineageBreadcrumb({ lineage, qualityReport, onSelectNode
         {/* Issues Pill */}
         {issues.length > 0 && (
           <div
-            onClick={() => setShowIssuesPopover(!showIssuesPopover)}
+            onClick={() => toggleModal(!showIssuesPopover)}
             style={{
               padding: '3px 9px',
               borderRadius: '16px',
@@ -295,50 +305,155 @@ export default function LineageBreadcrumb({ lineage, qualityReport, onSelectNode
           </div>
         )}
 
-        {/* Popover detailed issues list */}
-        {showIssuesPopover && (
+        {/* Floating Modal Detailed Quality Scorecard Window */}
+        {showIssuesPopover && mounted && createPortal(
           <div
             style={{
-              position: 'absolute',
-              top: '100%',
-              right: '12px',
-              marginTop: '6px',
-              width: '320px',
-              background: '#ffffff',
-              border: '1px solid #cbd5e1',
-              borderRadius: '12px',
-              padding: '14px',
-              boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.15)',
-              zIndex: 100,
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              width: '100vw',
+              height: '100vh',
+              background: 'rgba(15, 23, 42, 0.65)',
+              backdropFilter: 'blur(6px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 999999,
             }}
+            onClick={() => toggleModal(false)}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid #e2e8f0', paddingBottom: '6px' }}>
-              <div style={{ fontSize: '12px', fontWeight: '800', color: '#0f172a' }}>Quality Scorecard Details</div>
-              <button
-                onClick={() => setShowIssuesPopover(false)}
-                style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '14px' }}
+            <div
+              style={{
+                width: '540px',
+                maxWidth: '92vw',
+                maxHeight: '85vh',
+                background: '#ffffff',
+                borderRadius: '16px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
+                border: '1px solid #cbd5e1',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                position: 'relative',
+                zIndex: 1000000,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div
+                style={{
+                  padding: '16px 20px',
+                  background: '#ffffff',
+                  borderBottom: '1px solid #e2e8f0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
               >
-                ✕
-              </button>
-            </div>
-            <div style={{ fontSize: '11px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <div><strong>Health Score:</strong> {healthScore}%</div>
-              <div><strong>CQ Coverage:</strong> {cqCoverage}%</div>
-              <div><strong>Orphan Concepts:</strong> {orphanCount}</div>
-              {issues.length > 0 && (
-                <div style={{ marginTop: '6px', borderTop: '1px solid #f1f5f9', paddingTop: '6px' }}>
-                  <strong style={{ color: '#b91c1c' }}>Active Quality Issues:</strong>
-                  <ul style={{ paddingLeft: '16px', marginTop: '4px', margin: 0 }}>
-                    {issues.map((iss, i) => (
-                      <li key={i} style={{ fontSize: '10px', color: '#b91c1c', marginBottom: '3px' }}>
-                        {iss.message}
-                      </li>
-                    ))}
-                  </ul>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', padding: '6px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <ShieldCheck size={20} style={{ color: '#2563eb' }} />
+                  </div>
+                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', lineHeight: 1 }}>
+                    Quality Scorecard Details
+                  </h3>
                 </div>
-              )}
+                <button
+                  onClick={() => toggleModal(false)}
+                  style={{
+                    background: '#f1f5f9',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '8px',
+                    width: '32px',
+                    height: '32px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    color: '#475569',
+                    fontWeight: '800',
+                    fontSize: '14px',
+                    transition: 'background 0.15s ease',
+                  }}
+                  title="Close Quality Scorecard"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div style={{ padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', background: '#ffffff' }}>
+                {/* Metrics Grid Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                  <div style={{ background: healthBg, border: `1px solid ${healthBorder}`, padding: '14px 10px', borderRadius: '12px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: healthColor }}>Health Score</div>
+                    <div style={{ fontSize: '24px', fontWeight: '900', color: healthColor, marginTop: '4px' }}>{healthScore}%</div>
+                  </div>
+                  <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', padding: '14px 10px', borderRadius: '12px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#0369a1' }}>CQ Coverage</div>
+                    <div style={{ fontSize: '24px', fontWeight: '900', color: '#0369a1', marginTop: '4px' }}>{cqCoverage}%</div>
+                  </div>
+                  <div style={{ background: orphanCount > 0 ? '#fffbeb' : '#f8fafc', border: `1px solid ${orphanCount > 0 ? '#fde68a' : '#e2e8f0'}`, padding: '14px 10px', borderRadius: '12px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: orphanCount > 0 ? '#b45309' : '#475569' }}>Orphan Nodes</div>
+                    <div style={{ fontSize: '24px', fontWeight: '900', color: orphanCount > 0 ? '#b45309' : '#334155', marginTop: '4px' }}>{orphanCount}</div>
+                  </div>
+                </div>
+
+                {/* Active Issues Section */}
+                <div>
+                  <h4 style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <AlertCircle size={15} style={{ color: issues.length > 0 ? '#dc2626' : '#16a34a' }} />
+                    Active Quality Findings ({issues.length})
+                  </h4>
+                  {issues.length === 0 ? (
+                    <div style={{ padding: '16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', color: '#166534', fontSize: '12px', fontWeight: '700', textAlign: 'center' }}>
+                      🎉 Outstanding! Zero quality issues detected in this ontology model.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {issues.map((iss, i) => (
+                        <div key={i} style={{ padding: '12px 14px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ fontSize: '10px', fontWeight: '800', background: '#dc2626', color: '#ffffff', padding: '3px 8px', borderRadius: '4px' }}>
+                              {iss.severity} SEVERITY
+                            </span>
+                            <span style={{ fontSize: '10px', fontWeight: '800', color: '#991b1b' }}>{iss.code}</span>
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#991b1b', fontWeight: '600', lineHeight: '1.4' }}>
+                            {iss.message}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div style={{ padding: '14px 20px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => setShowIssuesPopover(false)}
+                  style={{
+                    padding: '8px 20px',
+                    fontSize: '12px',
+                    fontWeight: '800',
+                    background: '#2563eb',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 4px rgba(37,99,235,0.25)',
+                  }}
+                >
+                  Close Window
+                </button>
+              </div>
             </div>
-          </div>
+          </div>,
+          document.body
         )}
       </div>
     </div>

@@ -61,11 +61,21 @@ export function evaluateOntologyQuality(ontology: any): OntologyQualityReport {
     };
   }
 
-  // 1. Check for Orphan concepts (no incoming or outgoing relationships)
+  // 1. Check for Orphan concepts (no incoming or outgoing relationships or driver edges)
   const connectedConceptIds = new Set<string>();
   relationships.forEach((rel: any) => {
     if (rel.sourceConceptId) connectedConceptIds.add(rel.sourceConceptId);
     if (rel.targetConceptId) connectedConceptIds.add(rel.targetConceptId);
+    if (rel.sourceId) connectedConceptIds.add(rel.sourceId);
+    if (rel.targetId) connectedConceptIds.add(rel.targetId);
+  });
+
+  const driverEdges = ontology.driverEdges || ontology.driverLinks || [];
+  driverEdges.forEach((edge: any) => {
+    if (edge.sourceConceptId) connectedConceptIds.add(edge.sourceConceptId);
+    if (edge.targetConceptId) connectedConceptIds.add(edge.targetConceptId);
+    if (edge.sourceId) connectedConceptIds.add(edge.sourceId);
+    if (edge.targetId) connectedConceptIds.add(edge.targetId);
   });
 
   const orphanConcepts = concepts.filter(

@@ -155,22 +155,50 @@ export async function POST(
       // 2. Sync Relationships
       await tx.relationship.deleteMany({ where: { ontologyId } });
       let relCount = 0;
+      const connectedConceptIds = new Set<string>();
+
       for (const rel of relationships) {
         if (!rel.name || !rel.source || !rel.target) continue;
-        const src = labelToConcept[rel.source.trim()];
-        const tgt = labelToConcept[rel.target.trim()];
+        const src = findConceptByLabel(rel.source, labelToConcept);
+        const tgt = findConceptByLabel(rel.target, labelToConcept);
         if (src && tgt) {
-          await tx.relationship.create({
-            data: {
-              name: rel.name.trim(),
-              description: rel.description || '',
-              cardinality: rel.cardinality || 'one-to-many',
-              sourceId: src.id,
-              targetId: tgt.id,
-              ontologyId,
-            },
-          });
+          const relData: any = {
+            name: rel.name.trim(),
+            description: rel.description || '',
+            cardinality: rel.cardinality || 'one-to-many',
+            sourceId: src.id,
+            targetId: tgt.id,
+            ontologyId,
+          };
+          if (rel.propertyType && rel.propertyType !== 'ObjectProperty') {
+            relData.propertyType = rel.propertyType;
+          }
+
+          await tx.relationship.create({ data: relData });
+          connectedConceptIds.add(src.id);
+          connectedConceptIds.add(tgt.id);
           relCount++;
+        }
+      }
+
+      // 2b. Post-Sync Hard Stop for Orphans: Stitch any remaining orphan concepts
+      const primaryConceptId = newConceptIds[0];
+      if (primaryConceptId) {
+        for (const conceptId of newConceptIds) {
+          if (!connectedConceptIds.has(conceptId) && conceptId !== primaryConceptId) {
+            await tx.relationship.create({
+              data: {
+                name: 'isAssociatedWith',
+                description: 'Auto-stitched relationship to eliminate orphan node',
+                cardinality: 'one-to-many',
+                sourceId: conceptId,
+                targetId: primaryConceptId,
+                ontologyId,
+              },
+            });
+            connectedConceptIds.add(conceptId);
+            relCount++;
+          }
         }
       }
 
@@ -236,4 +264,42 @@ export async function POST(
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Agent pipeline execution failed' }, { status: 500 });
   }
+}
+
+function findConceptByLabel(rawLabel: string, labelToConcept: Record<string, any>): any | undefined {
+  if (!rawLabel) return undefined;
+  const clean = rawLabel.trim().toLowerCase();
+
+  if (labelToConcept[rawLabel.trim()]) {
+    return labelToConcept[rawLabel.trim()];
+  }
+
+  for (const key of Object.keys(labelToConcept)) {
+    if (key.trim().toLowerCase() === clean) {
+      return labelToConcept[key];
+    }
+  }
+
+  const removePrefix = (s: string) => {
+    return s.replace(/^\[(job|outcome|metric|process|entity|persona)\]\s*/i, '').trim();
+  };
+
+  const cleanNoPrefix = removePrefix(clean);
+  for (const key of Object.keys(labelToConcept)) {
+    const keyCleanNoPrefix = removePrefix(key.toLowerCase());
+    if (keyCleanNoPrefix === cleanNoPrefix) {
+      return labelToConcept[key];
+    }
+  }
+
+  const alphaNum = (s: string) => s.replace(/[^a-z0-9]/g, '');
+  const cleanAlphaNum = alphaNum(cleanNoPrefix);
+  for (const key of Object.keys(labelToConcept)) {
+    const keyAlphaNum = alphaNum(removePrefix(key.toLowerCase()));
+    if (keyAlphaNum === cleanAlphaNum) {
+      return labelToConcept[key];
+    }
+  }
+
+  return undefined;
 }

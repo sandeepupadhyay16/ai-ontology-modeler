@@ -80,11 +80,13 @@ export async function POST(
       for (const concept of concepts) {
         const dbConcept = await tx.concept.create({
           data: {
+            uri: concept.uri || null,
             label: concept.label,
             conceptType: concept.concept_type || 'Entity',
             ontologyId,
             attributes: {
               create: (concept.attributes || []).map((attr: any) => ({
+                uri: attr.uri || null,
                 name: attr.name,
                 datatype: attr.datatype || 'string',
                 description: attr.description || '',
@@ -93,8 +95,17 @@ export async function POST(
             },
           },
         });
-        // Key by original URI so we can wire relationships
         createdConcepts[concept.uri] = dbConcept;
+      }
+
+      // 2b. Connect parent concept hierarchy (rdfs:subClassOf)
+      for (const concept of concepts) {
+        if (concept.parent_uri && createdConcepts[concept.parent_uri] && createdConcepts[concept.uri]) {
+          await tx.concept.update({
+            where: { id: createdConcepts[concept.uri].id },
+            data: { parentConceptId: createdConcepts[concept.parent_uri].id },
+          });
+        }
       }
 
       // 3. Create relationships
@@ -104,16 +115,20 @@ export async function POST(
         const targetConcept = createdConcepts[rel.target_uri];
 
         if (sourceConcept && targetConcept) {
-          await tx.relationship.create({
-            data: {
-              name: rel.name,
-              description: rel.description || '',
-              cardinality: rel.cardinality || 'one-to-many',
-              sourceId: sourceConcept.id,
-              targetId: targetConcept.id,
-              ontologyId,
-            },
-          });
+          const relData: any = {
+            uri: rel.uri || null,
+            name: rel.name,
+            description: rel.description || '',
+            cardinality: rel.cardinality || 'one-to-many',
+            sourceId: sourceConcept.id,
+            targetId: targetConcept.id,
+            ontologyId,
+          };
+          if (rel.property_type && rel.property_type !== 'ObjectProperty') {
+            relData.propertyType = rel.property_type;
+          }
+
+          await tx.relationship.create({ data: relData });
           relationshipsCreated++;
         }
       }
@@ -124,10 +139,13 @@ export async function POST(
       };
     });
 
+    const summaryText = `📥 **Ontology Import Complete!**\n\n- **Concepts Created**: ${importSummary.conceptsCreated}\n- **Relationships Created**: ${importSummary.relationshipsCreated}`;
+
     return NextResponse.json({
       success: true,
       message: 'Ontology imported successfully',
-      summary: importSummary,
+      summary: summaryText,
+      stats: importSummary,
     });
   } catch (error: any) {
     console.error('Import error:', error);

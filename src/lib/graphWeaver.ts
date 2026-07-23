@@ -146,19 +146,34 @@ export function weaveOrphanConcepts(ontology: WovenOntology): WovenOntology {
   };
 
   const enrichedConcepts = concepts.map(c => {
+    const labelClean = (c.label || 'Concept').replace(/\s+/g, '');
+    const uri = c.uri || `http://enterprise.org/ontologies/domain#${labelClean}`;
     const existingAttrs = c.attributes || [];
-    if (!Array.isArray(existingAttrs) || existingAttrs.length === 0) {
-      return {
-        ...c,
-        attributes: defaultAttributesForType(c.conceptType || 'Entity', c.label || 'Concept'),
-      };
-    }
-    return c;
+    const attrs = (!Array.isArray(existingAttrs) || existingAttrs.length === 0)
+      ? defaultAttributesForType(c.conceptType || 'Entity', c.label || 'Concept')
+      : existingAttrs;
+
+    const enrichedAttrs = attrs.map((a: any) => ({
+      ...a,
+      uri: a.uri || `http://enterprise.org/ontologies/domain#has${a.name ? a.name[0].toUpperCase() + a.name.slice(1) : 'Attribute'}`,
+    }));
+
+    return {
+      ...c,
+      uri,
+      attributes: enrichedAttrs,
+    };
   });
+
+  const enrichedRelationships = relationships.map((r: any) => ({
+    ...r,
+    uri: r.uri || `http://enterprise.org/ontologies/domain#${r.name ? r.name.replace(/\s+/g, '') : 'rel'}`,
+    propertyType: r.propertyType || 'ObjectProperty',
+  }));
 
   return {
     concepts: enrichedConcepts,
-    relationships,
+    relationships: enrichedRelationships,
     competencyQuestions,
     driverTrees,
     causalCycles,

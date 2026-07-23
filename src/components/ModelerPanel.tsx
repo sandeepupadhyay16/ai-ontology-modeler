@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { X, Plus, Trash2, Save } from 'lucide-react';
 import { detectCausalCycles } from '@/lib/causalCycleDetector';
+import ChatPanel from '@/components/ChatPanel';
 
 function simulateDriverTree(edges: any[], inputMetric: string, inputValue: number): Record<string, number> {
   const deltas: Record<string, number> = {};
@@ -65,6 +66,10 @@ interface ModelerPanelProps {
   handleFileImport?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   importing?: boolean;
   fileInputRef?: any;
+  onGenerationComplete?: () => Promise<void>;
+  onGenerationStart?: () => (() => Promise<void>) | void;
+  onAutoFix?: () => void;
+  isFixing?: boolean;
 }
 
 export default function ModelerPanel({
@@ -92,6 +97,10 @@ export default function ModelerPanel({
   handleFileImport,
   importing = false,
   fileInputRef,
+  onGenerationComplete,
+  onGenerationStart,
+  onAutoFix,
+  isFixing = false,
 }: ModelerPanelProps) {
   // Local state for Ontology Metadata
   const [ontoName, setOntoName] = useState('');
@@ -101,6 +110,8 @@ export default function ModelerPanel({
   const [ontoIndustry, setOntoIndustry] = useState('');
   const [ontoFunction, setOntoFunction] = useState('');
   const [ontoObjective, setOntoObjective] = useState('');
+  const [ontoSolution, setOntoSolution] = useState('');
+  const [ontoProcess, setOntoProcess] = useState('');
 
   // Local state for CQs
   const [newCqText, setNewCqText] = useState('');
@@ -292,14 +303,40 @@ export default function ModelerPanel({
   const [relCard, setRelCard] = useState('one-to-many');
 
   // Local state for creating new items
-  const [activeTab, setActiveTab] = useState<'inspect' | 'competencies' | 'driver-trees' | 'import' | 'create-concept' | 'create-rel'>('inspect');
+  const [activeTab, setActiveTab] = useState<'ai-modeler' | 'inspect' | 'competencies' | 'driver-trees' | 'import' | 'create-concept' | 'create-rel' | 'w3c-export'>('ai-modeler');
   const [newConceptLabel, setNewConceptLabel] = useState('');
   const [newConceptType, setNewConceptType] = useState('Entity');
   const [newRelName, setNewRelName] = useState('');
   const [newRelSrc, setNewRelSrc] = useState('');
   const [newRelTgt, setNewRelTgt] = useState('');
 
+  const [shaclResult, setShaclResult] = useState<any>(null);
+  const [validatingShacl, setValidatingShacl] = useState(false);
+
+  const handleRunShaclValidation = async () => {
+    if (!ontology?.id) return;
+    setValidatingShacl(true);
+    try {
+      const res = await fetch(`/api/ontologies/${ontology.id}/shacl-validate`, { method: 'POST' });
+      const data = await res.json();
+      setShaclResult(data);
+    } catch (e) {
+      console.error('SHACL validation error:', e);
+    } finally {
+      setValidatingShacl(false);
+    }
+  };
+
   const [saving, setSaving] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteCqId, setConfirmDeleteCqId] = useState<string | null>(null);
+
+  // Sync state with selectedElement
+  useEffect(() => {
+    if (selectedElement && (elementType === 'concept' || elementType === 'relationship')) {
+      setActiveTab('inspect');
+    }
+  }, [selectedElement, elementType]);
 
   // Sync state with selectedElement
   useEffect(() => {
@@ -311,6 +348,8 @@ export default function ModelerPanel({
       setOntoIndustry(ontology?.industry || '');
       setOntoFunction(ontology?.businessFunction || '');
       setOntoObjective(ontology?.objective || '');
+      setOntoSolution(ontology?.businessSolution || '');
+      setOntoProcess(ontology?.businessProcessName || businessProcessName || '');
       setActiveTab('inspect');
     } else if (elementType === 'concept') {
       setConceptLabel(selectedElement.label || '');
@@ -333,7 +372,7 @@ export default function ModelerPanel({
       setRelCard(selectedElement.cardinality || 'one-to-many');
       setActiveTab('inspect');
     }
-  }, [selectedElement, elementType, ontology]);
+  }, [selectedElement, elementType, ontology, businessProcessName]);
 
   const handleSaveOntology = async () => {
     setSaving(true);
@@ -346,6 +385,8 @@ export default function ModelerPanel({
         industry: ontoIndustry,
         businessFunction: ontoFunction,
         objective: ontoObjective,
+        businessSolution: ontoSolution,
+        businessProcessName: ontoProcess,
       });
     } finally {
       setSaving(false);
@@ -451,9 +492,11 @@ export default function ModelerPanel({
       {/* Multi-Tab Navigation Bar */}
       <div style={{ display: 'flex', flexWrap: 'wrap', borderBottom: '1px solid #cbd5e1', background: '#f8fafc', padding: '6px', gap: '4px', flexShrink: 0 }}>
         {[
+          { id: 'ai-modeler', label: '✨ AI Modeler' },
           { id: 'inspect', label: '🔍 Inspect' },
           { id: 'competencies', label: `❓ CQs (${cqsList.length})` },
           { id: 'driver-trees', label: `📈 Driver Trees (${driverTrees.length})` },
+          { id: 'w3c-export', label: '🌐 W3C Export & SHACL' },
           { id: 'import', label: '📥 Import' },
           { id: 'create-concept', label: '+ Concept' },
           { id: 'create-rel', label: '+ Link' },
@@ -481,8 +524,26 @@ export default function ModelerPanel({
         ))}
       </div>
 
-      {/* Panel Content container */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* Tab Content Container */}
+      {activeTab === 'ai-modeler' ? (
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <ChatPanel
+            ontologyId={ontology?.id || ''}
+            concepts={conceptsList}
+            relationships={relationshipsList}
+            cqs={cqsList}
+            driverTrees={driverTrees}
+            perspectives={perspectives}
+            causalCycles={causalCycles}
+            onGenerationComplete={onGenerationComplete || (async () => {})}
+            onGenerationStart={onGenerationStart}
+            onAutoFix={onAutoFix}
+            isFixing={isFixing}
+          />
+        </div>
+      ) : (
+        /* Panel Content container */
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
         
         {/* Tab 1: Create Concept */}
         {activeTab === 'create-concept' && (
@@ -573,6 +634,141 @@ export default function ModelerPanel({
           </div>
         )}
 
+        {/* Tab: W3C Export & SHACL */}
+        {activeTab === 'w3c-export' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+            <div>
+              <h3 style={{ fontSize: '15px', fontWeight: '700', margin: '0 0 6px 0', color: '#1e293b' }}>
+                🌐 W3C Semantic Web Standards Exporter
+              </h3>
+              <p style={{ fontSize: '12px', color: '#64748b', margin: 0, lineHeight: '1.4' }}>
+                Export your domain ontology into W3C-compliant standards formats for Protégé, TopBraid Composer, GraphDB, Apache Jena, or Neo4j Neosemantics.
+              </p>
+            </div>
+
+            {/* Export Format Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              {[
+                { format: 'turtle', label: 'Turtle (.ttl)', desc: 'Canonical W3C RDF Turtle syntax' },
+                { format: 'xml', label: 'OWL / XML (.owl)', desc: 'Standard Web Ontology Language' },
+                { format: 'jsonld', label: 'JSON-LD (.jsonld)', desc: 'Linked Data JSON format' },
+                { format: 'nt', label: 'N-Triples (.nt)', desc: 'Line-based RDF triple stream' },
+              ].map((item) => (
+                <a
+                  key={item.format}
+                  href={`/api/ontologies/${ontology?.id}/export?format=${item.format}`}
+                  download
+                  style={{
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    background: '#f8fafc',
+                    textDecoration: 'none',
+                    color: '#0f172a',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                    transition: 'all 0.15s ease',
+                  }}
+                  onMouseOver={(e) => { e.currentTarget.style.borderColor = '#2563eb'; e.currentTarget.style.background = '#eff6ff'; }}
+                  onMouseOut={(e) => { e.currentTarget.style.borderColor = '#cbd5e1'; e.currentTarget.style.background = '#f8fafc'; }}
+                >
+                  <span style={{ fontWeight: '700', fontSize: '12px', color: '#2563eb' }}>📥 {item.label}</span>
+                  <span style={{ fontSize: '10px', color: '#64748b' }}>{item.desc}</span>
+                </a>
+              ))}
+            </div>
+
+            {/* SHACL Validation Section */}
+            <div style={{ paddingTop: '15px', borderTop: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h4 style={{ fontSize: '13px', fontWeight: '700', margin: '0 0 2px 0' }}>🛡️ W3C SHACL Shape Validation</h4>
+                  <span style={{ fontSize: '11px', color: '#64748b' }}>Validate structural and datatype shapes with PySHACL</span>
+                </div>
+                <button
+                  onClick={handleRunShaclValidation}
+                  disabled={validatingShacl}
+                  className="btn-primary"
+                  style={{ padding: '6px 12px', fontSize: '11px' }}
+                >
+                  {validatingShacl ? 'Validating...' : 'Run SHACL Check'}
+                </button>
+              </div>
+
+              {shaclResult && (
+                shaclResult.error ? (
+                  <div style={{
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: '1px solid #fca5a5',
+                    background: '#fef2f2',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                  }}>
+                    <span style={{ fontWeight: '700', fontSize: '12px', color: '#991b1b' }}>
+                      ❌ SHACL Validation Error
+                    </span>
+                    <span style={{ fontSize: '11px', color: '#7f1d1d' }}>{shaclResult.error}</span>
+                    {shaclResult.details && (
+                      <pre style={{
+                        fontSize: '10px',
+                        fontFamily: 'monospace',
+                        background: '#ffffff',
+                        padding: '8px',
+                        borderRadius: '4px',
+                        maxHeight: '150px',
+                        overflowY: 'auto',
+                        border: '1px solid #f87171',
+                        margin: 0,
+                        whiteSpace: 'pre-wrap',
+                      }}>
+                        {shaclResult.details}
+                      </pre>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: shaclResult.conforms ? '1px solid #86efac' : '1px solid #fcd34d',
+                    background: shaclResult.conforms ? '#f0fdf4' : '#fffbeb',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: '700', fontSize: '12px', color: shaclResult.conforms ? '#166534' : '#b45309' }}>
+                        {shaclResult.conforms ? '✅ Conforms to W3C SHACL Shapes' : '⚠️ SHACL Violations Detected'}
+                      </span>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#475569' }}>
+                        {shaclResult.conceptCount ?? conceptsList.length} Concepts • {shaclResult.relationshipCount ?? relationshipsList.length} Relations
+                      </span>
+                    </div>
+                    <pre style={{
+                      fontSize: '11px',
+                      fontFamily: 'monospace',
+                      background: '#ffffff',
+                      padding: '10px',
+                      borderRadius: '6px',
+                      maxHeight: '260px',
+                      overflowY: 'auto',
+                      border: '1px solid #cbd5e1',
+                      margin: 0,
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: '1.4',
+                      color: '#0f172a',
+                    }}>
+                      {shaclResult.report || 'Validation report clean - 0 SHACL constraint violations detected.'}
+                    </pre>
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Tab 3: Competency Questions */}
         {activeTab === 'competencies' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -614,12 +810,36 @@ export default function ModelerPanel({
                       {cq.question}
                     </div>
                     {onDeleteCQ && (
-                      <button
-                        onClick={() => onDeleteCQ(cq.id)}
-                        style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '2px' }}
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      confirmDeleteCqId === cq.id ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onDeleteCQ(cq.id);
+                              setConfirmDeleteCqId(null);
+                            }}
+                            style={{ background: '#dc2626', color: '#fff', border: 'none', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }}
+                          >
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteCqId(null)}
+                            style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', cursor: 'pointer' }}
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteCqId(cq.id)}
+                          style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '2px' }}
+                          title="Delete CQ"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )
                     )}
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
@@ -792,27 +1012,25 @@ export default function ModelerPanel({
                   />
                 </div>
                 <div>
-                  <label style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: '6px', display: 'block' }}>Business Process (Inherited)</label>
+                  <label style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: '6px', display: 'block' }}>Business Solution (e.g. Veeva CRM / SAP S/4HANA / Salesforce)</label>
                   <input
                     type="text"
                     className="form-input"
-                    disabled
-                    style={{ opacity: 0.7, cursor: 'not-allowed', backgroundColor: 'rgba(255, 255, 255, 0.05)' }}
-                    value={businessProcessName || 'None'}
+                    placeholder="e.g. Veeva CRM / Salesforce Marketing Cloud"
+                    value={ontoSolution}
+                    onChange={(e) => setOntoSolution(e.target.value)}
                   />
                 </div>
-                {subProcessName && (
-                  <div>
-                    <label style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: '6px', display: 'block' }}>Sub-process (Inherited)</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      disabled
-                      style={{ opacity: 0.7, cursor: 'not-allowed', backgroundColor: 'rgba(255, 255, 255, 0.05)' }}
-                      value={subProcessName}
-                    />
-                  </div>
-                )}
+                <div>
+                  <label style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: '6px', display: 'block' }}>Business Process</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="e.g. Omnichannel Outreach / Patient Onboarding"
+                    value={ontoProcess}
+                    onChange={(e) => setOntoProcess(e.target.value)}
+                  />
+                </div>
                 <button
                   onClick={handleSaveOntology}
                   disabled={saving || !ontoName.trim() || !ontoNs.trim()}
@@ -1506,14 +1724,38 @@ export default function ModelerPanel({
                   >
                     <Save size={16} /> Save
                   </button>
-                  <button
-                    onClick={() => onDeleteConcept(selectedElement.id)}
-                    disabled={saving}
-                    className="btn-danger"
-                    style={{ padding: '10px 16px' }}
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {confirmDeleteId === selectedElement.id ? (
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px', background: '#fef2f2', border: '1px solid #fca5a5', padding: '6px 8px', borderRadius: '8px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '800', color: '#b91c1c', flex: 1 }}>Confirm Delete?</span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await onDeleteConcept(selectedElement.id);
+                          setConfirmDeleteId(null);
+                        }}
+                        style={{ padding: '5px 10px', fontSize: '11px', fontWeight: '800', background: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(null)}
+                        style={{ padding: '5px 8px', fontSize: '11px', fontWeight: '700', background: '#ffffff', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer' }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDeleteId(selectedElement.id)}
+                      disabled={saving}
+                      className="btn-danger"
+                      style={{ padding: '10px 16px' }}
+                      title="Delete concept"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -1562,14 +1804,38 @@ export default function ModelerPanel({
                   >
                     <Save size={16} /> Save
                   </button>
-                  <button
-                    onClick={() => onDeleteRelationship(selectedElement.id)}
-                    disabled={saving}
-                    className="btn-danger"
-                    style={{ padding: '10px 16px' }}
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {confirmDeleteId === selectedElement.id ? (
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px', background: '#fef2f2', border: '1px solid #fca5a5', padding: '6px 8px', borderRadius: '8px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '800', color: '#b91c1c', flex: 1 }}>Confirm Delete?</span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await onDeleteRelationship(selectedElement.id);
+                          setConfirmDeleteId(null);
+                        }}
+                        style={{ padding: '5px 10px', fontSize: '11px', fontWeight: '800', background: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(null)}
+                        style={{ padding: '5px 8px', fontSize: '11px', fontWeight: '700', background: '#ffffff', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer' }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDeleteId(selectedElement.id)}
+                      disabled={saving}
+                      className="btn-danger"
+                      style={{ padding: '10px 16px' }}
+                      title="Delete relationship"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -1952,6 +2218,7 @@ export default function ModelerPanel({
           </>
         )}
       </div>
+      )}
     </div>
   );
 }

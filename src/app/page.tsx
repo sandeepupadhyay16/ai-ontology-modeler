@@ -81,7 +81,7 @@ export default function Home() {
 
   // Resizable Panel Width States
   const [leftWidth, setLeftWidth] = useState(280);
-  const [rightWidth, setRightWidth] = useState(380);
+  const [rightWidth, setRightWidth] = useState(440);
 
   // Collapsible sections
   const [isOrgCollapsed, setIsOrgCollapsed] = useState(false);
@@ -145,6 +145,9 @@ export default function Home() {
     return Array.from(objMap.values());
   }, [ontologies, draftObjectives]);
 
+  // Deletion confirmation state
+  const [confirmDeleteOntoId, setConfirmDeleteOntoId] = useState<string | null>(null);
+
   // New item creators for Org/Func/Process
   const [newOrgName, setNewOrgName] = useState('');
   const [newOrgIndustry, setNewOrgIndustry] = useState('');
@@ -177,6 +180,7 @@ export default function Home() {
 
   // Dashboard AI Assistance States
   const [aiGeneratingDashboard, setAiGeneratingDashboard] = useState(false);
+  const [isQualityModalOpen, setIsQualityModalOpen] = useState(false);
   const [dashboardStatusText, setDashboardStatusText] = useState('Analyzing function scope...');
   const [aiDashboardPrompt, setAiDashboardPrompt] = useState('');
   const [draftProcesses, setDraftProcesses] = useState<any[]>([]);
@@ -348,29 +352,6 @@ export default function Home() {
       const newWidth = startWidth - (mouseMoveEvent.clientX - startX);
       if (newWidth >= 280 && newWidth <= 550) {
         setRightWidth(newWidth);
-      }
-    };
-    
-    const stopDrag = () => {
-      document.removeEventListener('mousemove', doDrag);
-      document.removeEventListener('mouseup', stopDrag);
-    };
-    
-    document.addEventListener('mousemove', doDrag);
-    document.addEventListener('mouseup', stopDrag);
-  };
-
-  const [bottomHeight, setBottomHeight] = useState(300);
-
-  const startResizeBottom = (mouseDownEvent: React.MouseEvent) => {
-    mouseDownEvent.preventDefault();
-    const startHeight = bottomHeight;
-    const startY = mouseDownEvent.clientY;
-    
-    const doDrag = (mouseMoveEvent: MouseEvent) => {
-      const newHeight = startHeight - (mouseMoveEvent.clientY - startY);
-      if (newHeight >= 180 && newHeight <= 600) {
-        setBottomHeight(newHeight);
       }
     };
     
@@ -1547,11 +1528,11 @@ export default function Home() {
   // Delete ontology and go back
   const handleDeleteOntology = async (ontoId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation(); // Prevent opening the modeler
-    if (!confirm('Are you sure you want to delete this ontology? This action cannot be undone.')) return;
     try {
       const res = await fetch(`/api/ontologies/${ontoId}`, { method: 'DELETE' });
       if (res.ok) {
         setSelectedOntology(null);
+        setConfirmDeleteOntoId(null);
         await fetchAllOntologies();
         if (selectedProject && selectedProject.id !== 'cross-functional') {
           await handleSelectProject(selectedProject);
@@ -1810,14 +1791,31 @@ export default function Home() {
                         >
                           View Model
                         </button>
-                        <button
-                          onClick={(e) => handleDeleteOntology(onto.id, e)}
-                          className="btn-danger"
-                          style={{ padding: '6px', borderRadius: '6px' }}
-                          title="Delete Ontology"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {confirmDeleteOntoId === onto.id ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <button
+                              onClick={(e) => handleDeleteOntology(onto.id, e)}
+                              style={{ padding: '5px 8px', fontSize: '10px', fontWeight: '800', background: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                            >
+                              Yes, Delete
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setConfirmDeleteOntoId(null); }}
+                              style={{ padding: '5px 6px', fontSize: '10px', fontWeight: '700', background: '#ffffff', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer' }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setConfirmDeleteOntoId(onto.id); }}
+                            className="btn-danger"
+                            style={{ padding: '6px', borderRadius: '6px' }}
+                            title="Delete Ontology"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -1882,12 +1880,12 @@ export default function Home() {
 
               {/* Merged Studio Lineage & Quality Scorecard Bar */}
               <div style={{ flex: 1, overflow: 'hidden' }}>
-                <LineageBreadcrumb lineage={activeLineage} qualityReport={ontologyQualityReport} compact />
+                <LineageBreadcrumb lineage={activeLineage} qualityReport={ontologyQualityReport} compact onQualityModalChange={setIsQualityModalOpen} />
               </div>
             </div>
 
             {/* Top 5-Stage Agent Execution Stepper */}
-            <div style={{ padding: '8px 16px 0 16px', background: '#ffffff', zIndex: 10 }}>
+            <div style={{ padding: '6px 16px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', zIndex: 10 }}>
               <AgentStepper stages={pipelineStages} isExecuting={isExecutingPipeline} />
             </div>
 
@@ -1912,6 +1910,7 @@ export default function Home() {
                   driverTrees={driverTrees}
                   perspectives={perspectives}
                   causalCycles={causalCycles}
+                  isModalOpen={isQualityModalOpen}
                   onSelectConcept={(concept) => {
                     setSelectedElement(concept);
                     setElementType(concept ? 'concept' : 'ontology');
@@ -1929,41 +1928,6 @@ export default function Home() {
                   onDeleteRelationship={handleDeleteRelationship}
                 />
               )}
-            </div>
-
-            {/* Bottom Resizer divider handle */}
-            <div
-              onMouseDown={startResizeBottom}
-              style={{
-                height: '4px',
-                cursor: 'row-resize',
-                background: 'rgba(255,255,255,0.03)',
-                borderTop: '1px solid var(--border-translucent)',
-                borderBottom: '1px solid var(--border-translucent)',
-                zIndex: 10,
-                transition: 'background-color 0.15s',
-                alignSelf: 'stretch',
-                flexShrink: 0,
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'var(--color-primary)'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
-            />
-
-            {/* BOTTOM PANEL: AI Ontology Modeler */}
-            <div className="bottom-ai-panel" style={{ height: `${bottomHeight}px`, flexShrink: 0, flexGrow: 0, background: '#f8fafc', borderTop: '1px solid var(--border-translucent)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <ChatPanel
-                ontologyId={selectedOntology.id}
-                concepts={concepts}
-                relationships={relationships}
-                cqs={cqs}
-                driverTrees={driverTrees}
-                perspectives={perspectives}
-                causalCycles={causalCycles}
-                onGenerationComplete={() => loadOntologyData(selectedOntology.id)}
-                onGenerationStart={handleStartStageStepper}
-                onAutoFix={() => handleRunAgentPipeline(undefined, true)}
-                isFixing={isExecutingPipeline}
-              />
             </div>
           </div>
 
@@ -1985,8 +1949,8 @@ export default function Home() {
             onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
           />
 
-          {/* RIGHT PANEL: Modeler Inspector & Management Tabs */}
-          <div className="right-panel" style={{ width: `${rightWidth}px`, flexShrink: 0, flexGrow: 0 }}>
+          {/* RIGHT PANEL: Modeler Inspector & AI Conversational Modeler Tabs */}
+          <div className="right-panel" style={{ width: `${rightWidth}px`, flexShrink: 0, flexGrow: 0, height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div style={{ flex: 1, overflow: 'hidden' }}>
               <ModelerPanel
                 selectedElement={selectedElement}
@@ -2019,6 +1983,10 @@ export default function Home() {
                 handleFileImport={handleFileImport}
                 importing={importing}
                 fileInputRef={fileInputRef}
+                onGenerationComplete={() => loadOntologyData(selectedOntology.id)}
+                onGenerationStart={handleStartStageStepper}
+                onAutoFix={() => handleRunAgentPipeline(undefined, true)}
+                isFixing={isExecutingPipeline}
               />
             </div>
           </div>

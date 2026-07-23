@@ -50,36 +50,45 @@ def parse_rdf(file_path, fmt=None):
     concepts_dict = {}
     relationships = []
 
-    # 2. Extract OWL/RDFS Classes (Concepts)
-    for c in g.subjects(RDF.type, OWL.Class):
+    # 2. Extract OWL/RDFS Classes & SKOS Concepts
+    classes = list(g.subjects(RDF.type, OWL.Class)) + list(g.subjects(RDF.type, RDFS.Class))
+    for c in classes:
         uri_str = str(c)
-        if isinstance(c, URIRef): # Ignore blank nodes
+        if isinstance(c, URIRef) and uri_str not in concepts_dict:
             label = g.value(c, RDFS.label)
             comment = g.value(c, RDFS.comment)
+            parent = g.value(c, RDFS.subClassOf)
+            
             slug = get_local_name(uri_str)
             concepts_dict[uri_str] = {
                 "uri": uri_str,
                 "label": str(label) if label else slug,
                 "description": str(comment) if comment else "",
-                "concept_type": "Entity", # Default type
+                "concept_type": "Entity",
+                "parent_uri": str(parent) if parent and isinstance(parent, URIRef) else None,
                 "attributes": []
             }
 
-    # Fallback to RDFS.Class if OWL.Class is empty
-    if not concepts_dict:
-        for c in g.subjects(RDF.type, RDFS.Class):
-            uri_str = str(c)
-            if isinstance(c, URIRef):
-                label = g.value(c, RDFS.label)
-                comment = g.value(c, RDFS.comment)
-                slug = get_local_name(uri_str)
-                concepts_dict[uri_str] = {
-                    "uri": uri_str,
-                    "label": str(label) if label else slug,
-                    "description": str(comment) if comment else "",
-                    "concept_type": "Entity",
-                    "attributes": []
-                }
+    # Extract SKOS Concepts if present
+    SKOS_CONCEPT = URIRef("http://www.w3.org/2004/02/skos/core#Concept")
+    SKOS_PREF_LABEL = URIRef("http://www.w3.org/2004/02/skos/core#prefLabel")
+    SKOS_BROADER = URIRef("http://www.w3.org/2004/02/skos/core#broader")
+
+    for c in g.subjects(RDF.type, SKOS_CONCEPT):
+        uri_str = str(c)
+        if isinstance(c, URIRef) and uri_str not in concepts_dict:
+            pref = g.value(c, SKOS_PREF_LABEL) or g.value(c, RDFS.label)
+            comment = g.value(c, RDFS.comment)
+            broader = g.value(c, SKOS_BROADER)
+            slug = get_local_name(uri_str)
+            concepts_dict[uri_str] = {
+                "uri": uri_str,
+                "label": str(pref) if pref else slug,
+                "description": str(comment) if comment else "",
+                "concept_type": "Entity",
+                "parent_uri": str(broader) if broader and isinstance(broader, URIRef) else None,
+                "attributes": []
+            }
 
     # 3. Extract Datatype Properties (Attributes)
     for p in g.subjects(RDF.type, OWL.DatatypeProperty):
@@ -93,17 +102,14 @@ def parse_rdf(file_path, fmt=None):
         datatype = get_local_name(str(range_)) if range_ else "string"
         desc = str(comment) if comment else ""
         
-        # If domain is specified, attach to that concept
         if domain and str(domain) in concepts_dict:
             concepts_dict[str(domain)]["attributes"].append({
+                "uri": uri_str,
                 "name": attr_name,
                 "datatype": datatype,
                 "description": desc,
                 "required": False
             })
-        else:
-            # If no domain, attach to all or log as orphan
-            pass
 
     # 4. Extract Object Properties (Relationships)
     for p in g.subjects(RDF.type, OWL.ObjectProperty):
@@ -118,11 +124,13 @@ def parse_rdf(file_path, fmt=None):
         
         if domain and range_:
             relationships.append({
+                "uri": uri_str,
                 "name": rel_name,
                 "description": desc,
                 "source_uri": str(domain),
                 "target_uri": str(range_),
-                "cardinality": "one-to-many"
+                "cardinality": "one-to-many",
+                "property_type": "ObjectProperty"
             })
 
     return {

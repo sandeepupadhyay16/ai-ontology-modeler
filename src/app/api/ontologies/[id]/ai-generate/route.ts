@@ -621,6 +621,8 @@ Apply the auditor's corrections to make the ontology accurate. Ensure all concep
       await tx.relationship.deleteMany({ where: { ontologyId } });
 
       let relationshipsCreatedCount = 0;
+      const connectedConceptIds = new Set<string>();
+
       for (const rel of relationships) {
         if (!rel.name || !rel.source || !rel.target) continue;
 
@@ -628,17 +630,43 @@ Apply the auditor's corrections to make the ontology accurate. Ensure all concep
         const targetConcept = findConceptByLabel(rel.target, labelToConcept);
 
         if (sourceConcept && targetConcept) {
-          await tx.relationship.create({
-            data: {
-              name: rel.name.trim(),
-              description: rel.description || '',
-              cardinality: rel.cardinality || 'one-to-many',
-              sourceId: sourceConcept.id,
-              targetId: targetConcept.id,
-              ontologyId,
-            },
-          });
+          const relData: any = {
+            name: rel.name.trim(),
+            description: rel.description || '',
+            cardinality: rel.cardinality || 'one-to-many',
+            sourceId: sourceConcept.id,
+            targetId: targetConcept.id,
+            ontologyId,
+          };
+          if (rel.propertyType && rel.propertyType !== 'ObjectProperty') {
+            relData.propertyType = rel.propertyType;
+          }
+
+          await tx.relationship.create({ data: relData });
+          connectedConceptIds.add(sourceConcept.id);
+          connectedConceptIds.add(targetConcept.id);
           relationshipsCreatedCount++;
+        }
+      }
+
+      // 2b. Auto-stitch any remaining unconnected orphan concepts
+      const primaryConceptId = newConceptIds[0];
+      if (primaryConceptId) {
+        for (const conceptId of newConceptIds) {
+          if (!connectedConceptIds.has(conceptId) && conceptId !== primaryConceptId) {
+            await tx.relationship.create({
+              data: {
+                name: 'isAssociatedWith',
+                description: 'Auto-stitched relationship to eliminate orphan node',
+                cardinality: 'one-to-many',
+                sourceId: conceptId,
+                targetId: primaryConceptId,
+                ontologyId,
+              },
+            });
+            connectedConceptIds.add(conceptId);
+            relationshipsCreatedCount++;
+          }
         }
       }
 
@@ -781,7 +809,7 @@ Apply the auditor's corrections to make the ontology accurate. Ensure all concep
         });
       }
 
-      return {
+      const stats = {
         conceptsCreated: newConceptIds.length,
         relationshipsCreated: relationshipsCreatedCount,
         cqsCreated: competencyQuestions.length,
@@ -789,10 +817,14 @@ Apply the auditor's corrections to make the ontology accurate. Ensure all concep
         perspectivesCreated: perspectives.length,
         causalCyclesCreated: causalCycles.length,
       };
+      return stats;
     });
 
+    const summaryText = `✨ **Ontology Generation Complete!**\n\n- **Concepts Created**: ${summary.conceptsCreated}\n- **Relationships Created**: ${summary.relationshipsCreated}\n- **Competency Questions**: ${summary.cqsCreated}\n- **Driver Tree Generated**: ${summary.driverTreeCreated ? 'Yes' : 'No'}\n- **Persona Perspectives**: ${summary.perspectivesCreated}\n- **Causal Cycles**: ${summary.causalCyclesCreated}`;
+
     return NextResponse.json({
-      summary,
+      summary: summaryText,
+      stats: summary,
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Failed to generate ontology' }, { status: 500 });

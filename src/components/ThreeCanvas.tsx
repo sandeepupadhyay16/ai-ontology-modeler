@@ -48,6 +48,7 @@ interface ThreeCanvasProps {
   driverTrees?: any[];
   perspectives?: any[];
   causalCycles?: any[];
+  isModalOpen?: boolean;
   onRefresh: () => void;
   onAddConcept?: (label: string, type: string) => Promise<any>;
   onUpdateConcept?: (id: string, updatedData: any) => Promise<void>;
@@ -70,7 +71,7 @@ function getDeterministicPosition(id: string) {
 
 // 3D/2D Force-Directed Layout Generator with Linear Process Swimlane Alignment
 function run3DLayout(nodes: any[], links: Relationship[], driverLinks: DriverEdge[], force2D: boolean = false): Node3D[] {
-  const k = 18.0; // Increased ideal spring length for wider concept spacing
+  const k = 10.0; // Ideal spring length for compact, readable concept spacing
   const iterations = 100;
   
   // 1. Identify Process concepts and sequence flows
@@ -220,8 +221,8 @@ function run3DLayout(nodes: any[], links: Relationship[], driverLinks: DriverEdg
 
       const count = ids.length;
       ids.forEach((id, idx) => {
-        const tx = (depth - maxDepth / 2) * 28.0; // Widely spread horizontal columns
-        const ty = (idx - (count - 1) / 2) * 12.0; // Widely spread vertical rows to eliminate overlapping labels
+        const tx = (depth - maxDepth / 2) * 14.0; // Compact horizontal columns
+        const ty = (idx - (count - 1) / 2) * 6.5; // Compact vertical rows
         targetCoords.set(id, { x: tx, y: ty });
       });
     });
@@ -239,7 +240,7 @@ function run3DLayout(nodes: any[], links: Relationship[], driverLinks: DriverEdg
         const dz = force2D ? 0 : (n2.z - n1.z);
         const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 0.1;
         
-        const force = 16.0 / (dist * dist);
+        const force = 8.0 / (dist * dist);
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
         const fz = force2D ? 0 : ((dz / dist) * force);
@@ -400,9 +401,10 @@ interface NodeComponentProps {
   onClick: () => void;
   onDragPositionChange?: (id: string, newPos: { x: number; y: number; z: number }) => void;
   viewMode?: '2d' | '3d';
+  isModalOpen?: boolean;
 }
 
-function NodeItem({ node, isSelected, isDimmed, onClick, onDragPositionChange, viewMode }: NodeComponentProps) {
+function NodeItem({ node, isSelected, isDimmed, onClick, onDragPositionChange, viewMode, isModalOpen }: NodeComponentProps) {
   const [hovered, setHover] = useState(false);
   const color = getNodeColor(node.conceptType, node.label, isSelected);
   const isDraggingRef = useRef(false);
@@ -475,73 +477,75 @@ function NodeItem({ node, isSelected, isDimmed, onClick, onDragPositionChange, v
         />
       </mesh>
       
-      <Html distanceFactor={26} position={[0, 0.55, 0]} center>
-        <div
-          style={{
-            background: 'rgba(255, 255, 255, 0.95)',
-            border: isSelected
-              ? '1px solid #ec4899'
-              : node.isGrounded
-              ? '1px solid #10b981'
-              : node.isOrphan
-              ? '1px dashed #ef4444'
-              : '1px solid var(--border-translucent)',
-            padding: '4px 8px',
-            borderRadius: '6px',
-            color: 'var(--color-text-main)',
-            fontSize: '11px',
-            fontWeight: '600',
-            whiteSpace: 'nowrap',
-            pointerEvents: 'none',
-            userSelect: 'none',
-            boxShadow: isSelected
-              ? '0 0 10px rgba(236,72,153,0.15)'
-              : '0 2px 6px rgba(0,0,0,0.06)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            opacity: isDimmed ? 0.22 : 1.0,
-            transition: 'opacity 0.25s',
-          }}
-        >
-          {node.isGrounded && (
-            <span style={{ fontSize: '9px', background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)', color: '#34d399', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
-              Grounded
-            </span>
-          )}
-          {node.isOrphan && (
-            <span style={{ fontSize: '9px', background: '#ef4444', color: '#fff', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
-              ⚠️ Unconnected
-            </span>
-          )}
-          {isJob && (
-            <span style={{ fontSize: '9px', background: '#6366f1', color: '#fff', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
-              Job
-            </span>
-          )}
-          {isOutcome && (
-            <span style={{ fontSize: '9px', background: '#f59e0b', color: '#fff', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
-              Outcome
-            </span>
-          )}
-          {node.isStart && !isJob && (
-            <span style={{ fontSize: '9px', background: '#10b981', color: '#fff', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
-              Start
-            </span>
-          )}
-          {node.isEnd && !isJob && (
-            <span style={{ fontSize: '9px', background: '#ec4899', color: '#fff', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
-              End
-            </span>
-          )}
-          {node.grouping && (
-            <span style={{ fontSize: '8px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', color: 'var(--color-primary)', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.3px' }}>
-              {node.grouping}
-            </span>
-          )}
-          <span>{cleanLabel}</span>
-        </div>
-      </Html>
+      {!isModalOpen && (
+        <Html distanceFactor={26} position={[0, 0.55, 0]} center zIndexRange={[50, 0]}>
+          <div
+            style={{
+              background: 'rgba(255, 255, 255, 0.95)',
+              border: isSelected
+                ? '1px solid #ec4899'
+                : node.isGrounded
+                ? '1px solid #10b981'
+                : node.isOrphan
+                ? '1px dashed #ef4444'
+                : '1px solid var(--border-translucent)',
+              padding: '4px 8px',
+              borderRadius: '6px',
+              color: 'var(--color-text-main)',
+              fontSize: '11px',
+              fontWeight: '600',
+              whiteSpace: 'nowrap',
+              pointerEvents: 'none',
+              userSelect: 'none',
+              boxShadow: isSelected
+                ? '0 0 10px rgba(236,72,153,0.15)'
+                : '0 2px 6px rgba(0,0,0,0.06)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              opacity: isDimmed ? 0.22 : 1.0,
+              transition: 'opacity 0.25s',
+            }}
+          >
+            {node.isGrounded && (
+              <span style={{ fontSize: '9px', background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)', color: '#34d399', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                Grounded
+              </span>
+            )}
+            {node.isOrphan && (
+              <span style={{ fontSize: '9px', background: '#ef4444', color: '#fff', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                ⚠️ Unconnected
+              </span>
+            )}
+            {isJob && (
+              <span style={{ fontSize: '9px', background: '#6366f1', color: '#fff', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                Job
+              </span>
+            )}
+            {isOutcome && (
+              <span style={{ fontSize: '9px', background: '#f59e0b', color: '#fff', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                Outcome
+              </span>
+            )}
+            {node.isStart && !isJob && (
+              <span style={{ fontSize: '9px', background: '#10b981', color: '#fff', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                Start
+              </span>
+            )}
+            {node.isEnd && !isJob && (
+              <span style={{ fontSize: '9px', background: '#ec4899', color: '#fff', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                End
+              </span>
+            )}
+            {node.grouping && (
+              <span style={{ fontSize: '8px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', color: 'var(--color-primary)', padding: '1px 4px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.3px' }}>
+                {node.grouping}
+              </span>
+            )}
+            <span>{cleanLabel}</span>
+          </div>
+        </Html>
+      )}
     </group>
   );
 }
@@ -556,9 +560,10 @@ interface EdgeComponentProps {
   onClick: () => void;
   isDriver?: boolean;
   customColor?: string;
+  isModalOpen?: boolean;
 }
 
-function EdgeItem({ source, target, label, isSelected, isDimmed, onClick, isDriver, customColor }: EdgeComponentProps) {
+function EdgeItem({ source, target, label, isSelected, isDimmed, onClick, isDriver, customColor, isModalOpen }: EdgeComponentProps) {
   const [hovered, setHover] = useState(false);
   const lineRef = useRef<any>(null);
   const particleRef = useRef<THREE.Mesh>(null);
@@ -658,26 +663,28 @@ function EdgeItem({ source, target, label, isSelected, isDimmed, onClick, isDriv
         <meshBasicMaterial visible={false} />
       </mesh>
 
-      <Html distanceFactor={26} position={[midPoint[0], midPoint[1] + 0.3, midPoint[2]]} center>
-        <div
-          style={{
-            background: 'rgba(255, 255, 255, 0.95)',
-            border: '1px solid var(--border-translucent)',
-            padding: '4px 8px',
-            borderRadius: '6px',
-            color: isSelected ? '#ec4899' : isDriver ? '#fbbf24' : customColor ? customColor : 'var(--color-text-main)',
-            fontSize: '11px',
-            fontWeight: '600',
-            whiteSpace: 'nowrap',
-            boxShadow: '0 2px 6px rgba(0,0,0,0.05)',
-            pointerEvents: 'none',
-            opacity: isDimmed ? 0.12 : 1.0,
-            transition: 'opacity 0.25s',
-          }}
-        >
-          {label}
-        </div>
-      </Html>
+      {!isModalOpen && (
+        <Html distanceFactor={26} position={[midPoint[0], midPoint[1] + 0.3, midPoint[2]]} center zIndexRange={[50, 0]}>
+          <div
+            style={{
+              background: 'rgba(255, 255, 255, 0.95)',
+              border: '1px solid var(--border-translucent)',
+              padding: '4px 8px',
+              borderRadius: '6px',
+              color: isSelected ? '#ec4899' : isDriver ? '#fbbf24' : customColor ? customColor : 'var(--color-text-main)',
+              fontSize: '11px',
+              fontWeight: '600',
+              whiteSpace: 'nowrap',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.05)',
+              pointerEvents: 'none',
+              opacity: isDimmed ? 0.12 : 1.0,
+              transition: 'opacity 0.25s',
+            }}
+          >
+            {label}
+          </div>
+        </Html>
+      )}
     </group>
   );
 }
@@ -685,18 +692,25 @@ function EdgeItem({ source, target, label, isSelected, isDimmed, onClick, isDriv
 function CameraController({ 
   viewMode, 
   layoutNodes, 
-  controlsRef 
+  controlsRef,
+  triggerFitViewCount,
+  triggerZoomInCount,
+  triggerZoomOutCount,
+  triggerResetCenterCount,
 }: { 
   viewMode: '2d' | '3d'; 
   layoutNodes: Node3D[]; 
   controlsRef: React.RefObject<any>;
+  triggerFitViewCount: number;
+  triggerZoomInCount: number;
+  triggerZoomOutCount: number;
+  triggerResetCenterCount: number;
 }) {
   const { camera } = useThree();
 
-  useEffect(() => {
+  const fitView = () => {
     if (!layoutNodes || layoutNodes.length === 0) return;
 
-    // 1. Calculate bounding box of layout nodes
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
     let minZ = Infinity, maxZ = -Infinity;
@@ -714,40 +728,72 @@ function CameraController({
     const centerY = (minY + maxY) / 2;
     const centerZ = (minZ + maxZ) / 2;
 
-    const width = maxX - minX;
-    const height = maxY - minY;
-    const depth = maxZ - minZ;
+    const width = maxX - minX || 10;
+    const height = maxY - minY || 10;
+    const depth = maxZ - minZ || 10;
 
     const maxDim = Math.max(width, height, depth);
     const fov = (camera as any).fov || 40;
     const fovRad = (fov * Math.PI) / 360;
     
-    // Calculate required Z distance to fit the bounding sphere/box
     let distance = (maxDim / 2) / Math.tan(fovRad);
-    
-    // Add extra padding (especially in 2D mode for HTML overlay labels)
-    const paddingMultiplier = viewMode === '2d' ? 1.6 : 1.45;
-    distance = Math.max(distance * paddingMultiplier, 28);
+    const paddingMultiplier = viewMode === '2d' ? 1.35 : 1.25;
+    distance = Math.max(distance * paddingMultiplier, 18);
 
-    // 2. Position the camera and point it at the center
     if (viewMode === '2d') {
       camera.position.set(centerX, centerY, distance);
     } else {
-      // In 3D mode, position camera at a beautiful 3-dimensional perspective offset
       camera.position.set(
-        centerX + distance * 0.45, 
-        centerY + distance * 0.35, 
+        centerX + distance * 0.35, 
+        centerY + distance * 0.25, 
         centerZ + distance * 0.85
       );
     }
     camera.lookAt(centerX, centerY, centerZ);
 
-    // 3. Update OrbitControls target to the center of the graph
     if (controlsRef.current) {
       controlsRef.current.target.set(centerX, centerY, centerZ);
       controlsRef.current.update();
     }
-  }, [viewMode, layoutNodes, camera, controlsRef]);
+  };
+
+  useEffect(() => {
+    fitView();
+  }, [viewMode, layoutNodes.length]);
+
+  useEffect(() => {
+    if (triggerFitViewCount > 0) fitView();
+  }, [triggerFitViewCount]);
+
+  useEffect(() => {
+    if (triggerZoomInCount > 0 && controlsRef.current && camera) {
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      camera.position.addScaledVector(dir, 5.0);
+      controlsRef.current.update();
+    }
+  }, [triggerZoomInCount]);
+
+  useEffect(() => {
+    if (triggerZoomOutCount > 0 && controlsRef.current && camera) {
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      camera.position.addScaledVector(dir, -5.0);
+      controlsRef.current.update();
+    }
+  }, [triggerZoomOutCount]);
+
+  useEffect(() => {
+    if (triggerResetCenterCount > 0 && controlsRef.current && camera) {
+      controlsRef.current.target.set(0, 0, 0);
+      if (viewMode === '2d') {
+        camera.position.set(0, 0, 24);
+      } else {
+        camera.position.set(0, 0, 32);
+      }
+      controlsRef.current.update();
+    }
+  }, [triggerResetCenterCount]);
 
   return null;
 }
@@ -764,6 +810,7 @@ export default function ThreeCanvas({
   driverTrees = [],
   perspectives = [],
   causalCycles = [],
+  isModalOpen = false,
   onRefresh,
   onAddConcept,
   onUpdateConcept,
@@ -776,7 +823,12 @@ export default function ThreeCanvas({
   const [activePerspectiveFilter, setActivePerspectiveFilter] = useState<string | null>(null);
   const [activeCausalCycleHighlight, setActiveCausalCycleHighlight] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('3d');
-  const [spacingScale, setSpacingScale] = useState<number>(1.8);
+  const [spacingScale, setSpacingScale] = useState<number>(0.8);
+  const [triggerFitViewCount, setTriggerFitViewCount] = useState(0);
+  const [triggerZoomInCount, setTriggerZoomInCount] = useState(0);
+  const [triggerZoomOutCount, setTriggerZoomOutCount] = useState(0);
+  const [triggerResetCenterCount, setTriggerResetCenterCount] = useState(0);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [draggedPositions, setDraggedPositions] = useState<Map<string, { x: number; y: number; z: number }>>(new Map());
   const controlsRef = useRef<any>(null);
 
@@ -1113,13 +1165,94 @@ export default function ThreeCanvas({
 
         <div style={{ width: '1px', height: '20px', background: '#cbd5e1' }} />
 
+        {/* Pan / Zoom & Bounding Box Fit Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '2px 4px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+          <button
+            type="button"
+            onClick={() => setTriggerFitViewCount(c => c + 1)}
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              fontWeight: '700',
+              background: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              borderRadius: '6px',
+              color: '#2563eb',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              boxShadow: '0 1px 2px rgba(37,99,235,0.1)',
+            }}
+            title="Fit all nodes cleanly into view"
+          >
+            <span>🎯 Fit View</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTriggerZoomInCount(c => c + 1)}
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              fontWeight: '800',
+              background: '#ffffff',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              color: '#334155',
+              cursor: 'pointer',
+            }}
+            title="Zoom In (+)"
+          >
+            ➕
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTriggerZoomOutCount(c => c + 1)}
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              fontWeight: '800',
+              background: '#ffffff',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              color: '#334155',
+              cursor: 'pointer',
+            }}
+            title="Zoom Out (-)"
+          >
+            ➖
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTriggerResetCenterCount(c => c + 1)}
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              fontWeight: '700',
+              background: '#ffffff',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              color: '#334155',
+              cursor: 'pointer',
+            }}
+            title="Recenter camera target to (0,0,0)"
+          >
+            📍 Center
+          </button>
+        </div>
+
+        <div style={{ width: '1px', height: '20px', background: '#cbd5e1' }} />
+
         {/* Spacing Control Slider */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f8fafc', border: '1px solid #cbd5e1', padding: '3px 8px', borderRadius: '8px' }}>
           <span style={{ fontSize: '11px', fontWeight: '700', color: '#475569', whiteSpace: 'nowrap' }}>↔️ Spacing: {spacingScale.toFixed(1)}x</span>
           <input
             type="range"
-            min="1.0"
-            max="4.0"
+            min="0.3"
+            max="3.0"
             step="0.1"
             value={spacingScale}
             onChange={(e) => setSpacingScale(parseFloat(e.target.value))}
@@ -1132,8 +1265,9 @@ export default function ThreeCanvas({
         <button
           type="button"
           onClick={() => {
-            setSpacingScale(1.8);
+            setSpacingScale(0.8);
             setDraggedPositions(new Map());
+            setTriggerFitViewCount(c => c + 1);
           }}
           style={{
             padding: '4px 9px',
@@ -1149,7 +1283,7 @@ export default function ThreeCanvas({
             gap: '4px',
             boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
           }}
-          title="Reset manual drag positions and restore auto-spaced force layout"
+          title="Reset manual drag positions and restore compact force layout"
         >
           <span>🔄 Reset Spacing</span>
         </button>
@@ -1268,7 +1402,15 @@ export default function ThreeCanvas({
         <ambientLight intensity={1.2} />
         <pointLight position={[10, 10, 10]} intensity={1.5} />
         <directionalLight position={[-10, -10, -10]} intensity={0.5} />
-        <CameraController viewMode={viewMode} layoutNodes={layoutNodes} controlsRef={controlsRef} />
+        <CameraController 
+          viewMode={viewMode} 
+          layoutNodes={layoutNodes} 
+          controlsRef={controlsRef} 
+          triggerFitViewCount={triggerFitViewCount}
+          triggerZoomInCount={triggerZoomInCount}
+          triggerZoomOutCount={triggerZoomOutCount}
+          triggerResetCenterCount={triggerResetCenterCount}
+        />
         
         {/* Render Standard Relationships */}
         {filteredRelationships.map((rel) => {
@@ -1285,6 +1427,7 @@ export default function ThreeCanvas({
               label={rel.name}
               isSelected={selectedId === rel.id}
               isDimmed={isDimmed}
+              isModalOpen={isModalOpen}
               onClick={() => onSelectRelationship(rel)}
             />
           );
@@ -1306,6 +1449,7 @@ export default function ThreeCanvas({
               isDriver
               isSelected={true}
               isDimmed={false}
+              isModalOpen={isModalOpen}
               onClick={() => {}}
               customColor={isReinforcing ? '#10b981' : '#ef4444'}
             />
@@ -1325,6 +1469,7 @@ export default function ThreeCanvas({
               onClick={() => onSelectConcept(original)}
               onDragPositionChange={handleDragPositionChange}
               viewMode={viewMode}
+              isModalOpen={isModalOpen}
             />
           );
         })}
@@ -1553,40 +1698,79 @@ export default function ThreeCanvas({
         {selectedId && selectedType === 'concept' && (() => {
           const selectedConcept = concepts.find(c => c.id === selectedId);
           if (!selectedConcept) return null;
+          const isConfirming = confirmDeleteId === selectedConcept.id;
           return (
             <div style={{
               position: 'absolute',
               bottom: '16px',
               left: '50%',
               transform: 'translateX(-50%)',
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border-translucent)',
+              background: '#ffffff',
+              border: isConfirming ? '1px solid #fca5a5' : '1px solid #cbd5e1',
               borderRadius: '12px',
-              padding: '12px 20px',
+              padding: '10px 18px',
               display: 'flex',
               alignItems: 'center',
-              gap: '16px',
+              gap: '14px',
               zIndex: 10,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-              backdropFilter: 'blur(8px)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
             }}>
-              <span style={{ fontSize: '12px', fontWeight: 'bold' }}>
-                Selected Concept: <span style={{ color: 'var(--color-primary)' }}>{selectedConcept.label}</span> ({selectedConcept.conceptType})
+              <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#0f172a' }}>
+                Selected Concept: <span style={{ color: '#2563eb' }}>{selectedConcept.label}</span> ({selectedConcept.conceptType})
               </span>
-              <button
-                onClick={async () => {
-                  if (confirm(`Are you sure you want to delete concept "${selectedConcept.label}"?`)) {
-                    if (onDeleteConcept) {
-                      await onDeleteConcept(selectedConcept.id);
-                      onSelectConcept(null);
-                    }
-                  }
-                }}
-                className="btn-danger"
-                style={{ padding: '6px 12px', fontSize: '11px', cursor: 'pointer' }}
-              >
-                Delete
-              </button>
+
+              {isConfirming ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '800', color: '#dc2626' }}>
+                    Confirm Delete?
+                  </span>
+                  <button
+                    onClick={async () => {
+                      if (onDeleteConcept) {
+                        await onDeleteConcept(selectedConcept.id);
+                        onSelectConcept(null);
+                        setConfirmDeleteId(null);
+                      }
+                    }}
+                    style={{
+                      background: '#dc2626',
+                      color: '#ffffff',
+                      border: 'none',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      fontWeight: '800',
+                      cursor: 'pointer',
+                      boxShadow: '0 1px 3px rgba(220,38,38,0.25)',
+                    }}
+                  >
+                    Yes, Delete
+                  </button>
+                  <button
+                    onClick={() => setConfirmDeleteId(null)}
+                    style={{
+                      background: '#f1f5f9',
+                      color: '#475569',
+                      border: '1px solid #cbd5e1',
+                      padding: '4px 8px',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDeleteId(selectedConcept.id)}
+                  className="btn-danger"
+                  style={{ padding: '5px 12px', fontSize: '11px', cursor: 'pointer' }}
+                >
+                  Delete
+                </button>
+              )}
             </div>
           );
         })()}
@@ -1595,40 +1779,79 @@ export default function ThreeCanvas({
         {selectedId && selectedType === 'relationship' && (() => {
           const selectedRel = relationships.find(r => r.id === selectedId);
           if (!selectedRel) return null;
+          const isConfirming = confirmDeleteId === selectedRel.id;
           return (
             <div style={{
               position: 'absolute',
               bottom: '16px',
               left: '50%',
               transform: 'translateX(-50%)',
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border-translucent)',
+              background: '#ffffff',
+              border: isConfirming ? '1px solid #fca5a5' : '1px solid #cbd5e1',
               borderRadius: '12px',
-              padding: '12px 20px',
+              padding: '10px 18px',
               display: 'flex',
               alignItems: 'center',
-              gap: '16px',
+              gap: '14px',
               zIndex: 10,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-              backdropFilter: 'blur(8px)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
             }}>
-              <span style={{ fontSize: '12px', fontWeight: 'bold' }}>
-                Selected Relationship: <span style={{ color: 'var(--color-primary)' }}>{selectedRel.name}</span>
+              <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#0f172a' }}>
+                Selected Relationship: <span style={{ color: '#2563eb' }}>{selectedRel.name}</span>
               </span>
-              <button
-                onClick={async () => {
-                  if (confirm(`Are you sure you want to delete relationship "${selectedRel.name}"?`)) {
-                    if (onDeleteRelationship) {
-                      await onDeleteRelationship(selectedRel.id);
-                      onSelectRelationship(null);
-                    }
-                  }
-                }}
-                className="btn-danger"
-                style={{ padding: '6px 12px', fontSize: '11px', cursor: 'pointer' }}
-              >
-                Delete
-              </button>
+
+              {isConfirming ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '800', color: '#dc2626' }}>
+                    Confirm Delete?
+                  </span>
+                  <button
+                    onClick={async () => {
+                      if (onDeleteRelationship) {
+                        await onDeleteRelationship(selectedRel.id);
+                        onSelectRelationship(null);
+                        setConfirmDeleteId(null);
+                      }
+                    }}
+                    style={{
+                      background: '#dc2626',
+                      color: '#ffffff',
+                      border: 'none',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      fontWeight: '800',
+                      cursor: 'pointer',
+                      boxShadow: '0 1px 3px rgba(220,38,38,0.25)',
+                    }}
+                  >
+                    Yes, Delete
+                  </button>
+                  <button
+                    onClick={() => setConfirmDeleteId(null)}
+                    style={{
+                      background: '#f1f5f9',
+                      color: '#475569',
+                      border: '1px solid #cbd5e1',
+                      padding: '4px 8px',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDeleteId(selectedRel.id)}
+                  className="btn-danger"
+                  style={{ padding: '5px 12px', fontSize: '11px', cursor: 'pointer' }}
+                >
+                  Delete
+                </button>
+              )}
             </div>
           );
         })()}
