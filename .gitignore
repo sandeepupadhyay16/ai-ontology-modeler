@@ -43,3 +43,7 @@ next-env.d.ts
 /src/generated/prisma
 __pycache__/
 *.pyc
+
+# Stage 10/12 generated stores — not part of the app source (own git repo / triplestore stand-in)
+/ontology-store
+/published

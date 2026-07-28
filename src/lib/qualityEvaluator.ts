@@ -1,3 +1,5 @@
+import { isTagRootConcept } from './upperOntology';
+
 export interface OntologyQualityReport {
   healthScore: number; // 0 - 100
   cqCoveragePercent: number;
@@ -35,7 +37,10 @@ export function evaluateOntologyQuality(ontology: any): OntologyQualityReport {
     };
   }
 
-  const concepts = ontology.concepts || [];
+  // Stage 5's promotion service auto-creates per-module Layer 1 anchor concepts
+  // (typeFields.marker === TAG_ROOT_MARKER) purely as hierarchy infrastructure — they have
+  // no relationships by design and must not be counted as concepts or flagged as orphans.
+  const concepts = (ontology.concepts || []).filter((c: any) => !isTagRootConcept(c));
   const relationships = ontology.relationships || [];
   const competencyQuestions = ontology.competencyQuestions || [];
   const causalCycles = ontology.causalCycles || [];

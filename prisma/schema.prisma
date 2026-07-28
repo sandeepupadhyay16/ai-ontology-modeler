@@ -38,6 +38,15 @@ model Ontology {
   tags                String[]             @default([])
   businessProcessId   String?
   owlAxioms           Json?
+  // Stage 5 module handling (idea.md's Layer 2/core vs Layer 3/extension split —
+  // see IMPLEMENTATION_PLAN.md "Cross-cutting: Extension & module handling").
+  // "core" | "extension:<domainProfileKey>". extendsOntologyId is only set on
+  // extension rows and points at the core Ontology they owl:import; core rows
+  // never point at an extension (the enforced one-way dependency).
+  moduleScope         String               @default("core")
+  extendsOntologyId   String?
+  extendsOntology     Ontology?            @relation("OntologyExtends", fields: [extendsOntologyId], references: [id], onDelete: SetNull)
+  extendedBy          Ontology[]           @relation("OntologyExtends")
   causalCycles        CausalCycle[]
   competencyQuestions CompetencyQuestion[]
   concepts            Concept[]
@@ -51,26 +60,37 @@ model Ontology {
   perspectives        Perspective[]
   relationships       Relationship[]
   rules               Rule[]
+  modelingSessions    ModelingSession[]
+  ontologyVersions    OntologyVersion[]
 }
 
 model Concept {
-  id                  String         @id @default(uuid())
+  id                  String             @id @default(uuid())
   uri                 String?
   label               String
-  conceptType         String         @default("Entity")
+  description         String? // Stage 5: populated at promotion from the candidate's payload description; enables label+type+description dedup embedding
+  conceptType         String             @default("Entity")
   typeFields          Json?
   parentConceptId     String?
   ontologyId          String
-  createdAt           DateTime       @default(now())
+  createdAt           DateTime           @default(now())
   attributes          Attribute[]
-  ontology            Ontology       @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
-  parentConcept       Concept?       @relation("ConceptHierarchy", fields: [parentConceptId], references: [id], onDelete: SetNull)
-  subConcepts         Concept[]      @relation("ConceptHierarchy")
+  ontology            Ontology           @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+  parentConcept       Concept?           @relation("ConceptHierarchy", fields: [parentConceptId], references: [id], onDelete: SetNull)
+  subConcepts         Concept[]          @relation("ConceptHierarchy")
   mappings            DataMapping[]
-  personaPerspectives Perspective[]  @relation("PersonaPerspective")
-  sourceRel           Relationship[] @relation("SourceConcept")
-  targetRel           Relationship[] @relation("TargetConcept")
-  perspectives        Perspective[]  @relation("PerspectiveConcepts")
+  personaPerspectives Perspective[]      @relation("PersonaPerspective")
+  sourceRel           Relationship[]     @relation("SourceConcept")
+  targetRel           Relationship[]     @relation("TargetConcept")
+  perspectives        Perspective[]      @relation("PerspectiveConcepts")
+  dupCandidates       CandidateConcept[] @relation("CandidateDupTarget")
+  mergeCandidates     CandidateConcept[] @relation("CandidateMergeTarget")
+  parentOverrideFor   CandidateConcept[] @relation("CandidateParentOverride")
+  promotedFrom        CandidateConcept[] @relation("CandidatePromotedConcept")
+  glossaryDrafts      GlossaryDraft[]
+  embedding           Float[]            @default([]) // Stage 4: dup/conflict detection vector
+  embeddingModel      String? // pinned model id the vector was generated with — see src/lib/embeddings.ts
+  embeddingDim        Int? // dims of `embedding` — must match embeddingModel's pinned output dim to be comparable
 }
 
 model Attribute {
@@ -82,21 +102,33 @@ model Attribute {
   required    Boolean @default(false)
   conceptId   String
   concept     Concept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  // Stage 6 traceability: which ChangeSet's promotion created this row — set by
+  // src/lib/promotion.ts on BOTH the brand-new-concept path and the merge-additive-attribute
+  // path. Needed because Attribute has no createdAt to approximate "added by changeset X" from,
+  // and a merge's new attributes land on an EXISTING Concept (whose own promotedConceptId
+  // traceability only identifies newly-created concepts, not attributes added onto one that
+  // already existed) — src/lib/ttlDiff.ts reads this to know exactly which properties are new.
+  addedInChangeSetId String?
+  addedInChangeSet   ChangeSet? @relation(fields: [addedInChangeSetId], references: [id], onDelete: SetNull)
+  ruleDrafts         RuleDraft[]
 }
 
 model Relationship {
-  id           String   @id @default(uuid())
-  uri          String?
-  name         String
-  description  String?
-  cardinality  String   @default("one-to-many")
-  propertyType String   @default("ObjectProperty")
-  sourceId     String
-  targetId     String
-  ontologyId   String
-  ontology     Ontology @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
-  source       Concept  @relation("SourceConcept", fields: [sourceId], references: [id], onDelete: Cascade)
-  target       Concept  @relation("TargetConcept", fields: [targetId], references: [id], onDelete: Cascade)
+  id             String             @id @default(uuid())
+  uri            String?
+  name           String
+  description    String?
+  cardinality    String             @default("one-to-many")
+  propertyType   String             @default("ObjectProperty")
+  sourceId       String
+  targetId       String
+  ontologyId     String
+  ontology       Ontology           @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+  source         Concept            @relation("SourceConcept", fields: [sourceId], references: [id], onDelete: Cascade)
+  target         Concept            @relation("TargetConcept", fields: [targetId], references: [id], onDelete: Cascade)
+  glossaryDrafts GlossaryDraft[]
+  promotedFrom   CandidateConcept[] @relation("CandidatePromotedRelationship")
+  ruleDrafts     RuleDraft[]
 }
 
 model Constraint {
@@ -339,4 +371,153 @@ model LlmConfiguration {
   isActive  Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// --- Candidate staging + governance (conversational modeling assistant) ---
+// idea.md "Data model" section. Status/decision fields below use plain String
+// with a documented allowed set (matching this schema's existing convention,
+// e.g. BusinessSolution.status, DataMapping.status) rather than Prisma enum.
+
+model ModelingSession {
+  id            String             @id @default(uuid())
+  ontologyId    String
+  domainProfile String?
+  participant   String?
+  status        String             @default("ACTIVE") // ACTIVE|COMPLETED
+  startedAt     DateTime           @default(now())
+  ontology      Ontology           @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+  turns         ConversationTurn[]
+  candidates    CandidateConcept[]
+  changeSets    ChangeSet[]
+}
+
+model ConversationTurn {
+  id             String             @id @default(uuid())
+  sessionId      String
+  ordinal        Int
+  role           String // user|assistant
+  content        String
+  createdAt      DateTime           @default(now())
+  session        ModelingSession    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  candidates     CandidateConcept[]
+  glossaryDrafts GlossaryDraft[]
+  ruleDrafts     RuleDraft[]
+
+  @@unique([sessionId, ordinal])
+}
+
+model CandidateConcept {
+  id                     String           @id @default(uuid())
+  sessionId              String
+  sourceTurnId           String
+  label                  String
+  candidateType          String // Entity|Relationship|Attribute|Event|...
+  upperOntologyTag       String? // filled in Stage 3
+  scope                  String           @default("core") // "core" | "extension:<domainProfileKey>" — set from the session's domain profile at extraction time (domain -> extension, no domain -> core); promotion to core is ontologist-gated at review
+  dupStatus              String           @default("UNCHECKED") // UNCHECKED|UNIQUE|POSSIBLE_DUP|CONFLICT
+  dupTargetConceptId     String?
+  similarityScore        Float?
+  decision               String           @default("PENDING") // PENDING|ACCEPTED|REJECTED|MERGED
+  mergeTargetConceptId   String?
+  parentConceptId        String? // ontologist override for promotion parenting; defaults to the Layer 1 tag-root when unset — see src/lib/promotion.ts
+  payload                Json? // proposed attributes / relationships
+  createdAt              DateTime         @default(now())
+  // Stage 5 promotion traceability: which ChangeSet processed this candidate, and
+  // what it became. promotedConceptId/promotedRelationshipId are set for both a
+  // fresh ACCEPTED promotion and a MERGED redirect (mirrors mergeTargetConceptId
+  // in the merge case) so "what did this candidate turn into" is a single lookup.
+  changeSetId            String?
+  promotedConceptId      String?
+  promotedRelationshipId String?
+  changeSet              ChangeSet?       @relation(fields: [changeSetId], references: [id], onDelete: SetNull)
+  session                ModelingSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sourceTurn             ConversationTurn @relation(fields: [sourceTurnId], references: [id], onDelete: Cascade)
+  dupTargetConcept       Concept?         @relation("CandidateDupTarget", fields: [dupTargetConceptId], references: [id], onDelete: SetNull)
+  mergeTargetConcept     Concept?         @relation("CandidateMergeTarget", fields: [mergeTargetConceptId], references: [id], onDelete: SetNull)
+  parentConceptOverride  Concept?         @relation("CandidateParentOverride", fields: [parentConceptId], references: [id], onDelete: SetNull)
+  promotedConcept        Concept?         @relation("CandidatePromotedConcept", fields: [promotedConceptId], references: [id], onDelete: SetNull)
+  promotedRelationship   Relationship?    @relation("CandidatePromotedRelationship", fields: [promotedRelationshipId], references: [id], onDelete: SetNull)
+}
+
+model ChangeSet {
+  id              String             @id @default(uuid())
+  sessionId       String
+  status          String             @default("DRAFT") // DRAFT|APPROVED|VALIDATED|SIGNED_OFF|PUBLISHED
+  ttlDiff         String? // Stage 6: concatenated multi-module Turtle patch (all touched modules, delimited by "### FILE:" headers) — see src/lib/ttlDiff.ts
+  ttlFiles        Json? // Stage 6: the same patch broken out per module — { [ontologyId]: { moduleScope, namespaceUri, filename, ttl } } — "write extension concepts into the extension's TTL file (not core's)"
+  diffSummary     String? // Stage 6: human-readable "what changed" text (idea.md §8), generated deterministically alongside ttlDiff/ttlFiles
+  summary         String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  session         ModelingSession    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  glossaryDrafts  GlossaryDraft[]
+  ruleDrafts      RuleDraft[]
+  signoffs        Signoff[]
+  ontologyVersion OntologyVersion?
+  candidates      CandidateConcept[]
+  attributesAdded Attribute[]
+}
+
+model GlossaryDraft {
+  id                   String           @id @default(uuid())
+  changeSetId          String
+  linkedConceptId      String?
+  linkedRelationshipId String?
+  term                 String
+  definition           String
+  sourceTurnId         String
+  confirmationStatus   String           @default("PENDING") // PENDING|CONFIRMED|REJECTED
+  createdAt            DateTime         @default(now())
+  changeSet            ChangeSet        @relation(fields: [changeSetId], references: [id], onDelete: Cascade)
+  linkedConcept        Concept?         @relation(fields: [linkedConceptId], references: [id], onDelete: SetNull)
+  linkedRelationship   Relationship?    @relation(fields: [linkedRelationshipId], references: [id], onDelete: SetNull)
+  sourceTurn           ConversationTurn @relation(fields: [sourceTurnId], references: [id], onDelete: Cascade)
+}
+
+model RuleDraft {
+  id                   String           @id @default(uuid())
+  changeSetId          String
+  // Dual real FKs (Stage 8, replacing the earlier polymorphic linkedPropertyId+Type): the
+  // ontology property this rule reads from is either a datatype property (Attribute) or an
+  // object property (Relationship). Real FKs give DB-enforced referential integrity, matching
+  // GlossaryDraft's linkedConcept/linkedRelationship pattern. Exactly one is set.
+  linkedAttributeId    String?
+  linkedRelationshipId String?
+  condition            Json
+  derivedValue         Json
+  // idea.md §6: when the user's statement is vague ("formulary tier determines access
+  // priority") the elicitation asks for the explicit thresholds ("which tier levels map to
+  // which priority?"). This holds that question; the ontologist answers by editing
+  // condition/derivedValue before confirming. Null once the rule is fully specified.
+  clarifyingQuestion   String?
+  sourceTurnId         String
+  confirmationStatus   String           @default("PENDING") // PENDING|CONFIRMED|REJECTED
+  createdAt            DateTime         @default(now())
+  changeSet            ChangeSet        @relation(fields: [changeSetId], references: [id], onDelete: Cascade)
+  sourceTurn           ConversationTurn @relation(fields: [sourceTurnId], references: [id], onDelete: Cascade)
+  linkedAttribute      Attribute?       @relation(fields: [linkedAttributeId], references: [id], onDelete: SetNull)
+  linkedRelationship   Relationship?    @relation(fields: [linkedRelationshipId], references: [id], onDelete: SetNull)
+}
+
+model OntologyVersion {
+  id           String    @id @default(uuid())
+  ontologyId   String
+  changeSetId  String    @unique
+  gitCommitSha String? // filled in Stage 10
+  changelog    String?
+  createdAt    DateTime  @default(now())
+  ontology     Ontology  @relation(fields: [ontologyId], references: [id], onDelete: Cascade)
+  changeSet    ChangeSet @relation(fields: [changeSetId], references: [id], onDelete: Cascade)
+}
+
+model Signoff {
+  id           String    @id @default(uuid())
+  changeSetId  String
+  approverRole String
+  approver     String
+  decision     String // APPROVED|REJECTED
+  comments     String?
+  decidedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  changeSet    ChangeSet @relation(fields: [changeSetId], references: [id], onDelete: Cascade)
 }

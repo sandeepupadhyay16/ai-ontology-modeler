@@ -5,8 +5,8 @@ import {
   runDomainTaxonomist,
   runProcessModeler,
   evaluateOntologyQuality,
-  cleanAndParseJSON,
 } from '@/lib/agentPipeline';
+import { cleanAndParseJSON } from '@/lib/llm';
 
 export async function POST(
   request: Request,

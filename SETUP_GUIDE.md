@@ -95,11 +95,14 @@ If using a local PostgreSQL server:
    LM_STUDIO_URL="http://localhost:1234/v1"
    ```
 
-5. **Generate Prisma Client & Push Schema**:
+5. **Generate Prisma Client & Apply Migrations**:
    ```powershell
    npx prisma generate
-   npx prisma db push
+   npx prisma migrate deploy
    ```
+   > Use `migrate deploy` (not `db push`) so your local database's migration history stays in
+   > sync with the committed migrations in `prisma/migrations/`. `db push` leaves no history and
+   > later forces a destructive reset when running `prisma migrate dev`.
 
 6. **Seed Database with Default Ontologies & Templates**:
    ```powershell
@@ -174,9 +177,14 @@ LM_STUDIO_URL="http://localhost:1234/v1"
 
 ```bash
 npx prisma generate
-npx prisma db push
+npx prisma migrate deploy
 npx tsx prisma/seed.ts
 ```
+
+> Use `migrate deploy` (not `db push`) so the local migration history matches the committed
+> migrations in `prisma/migrations/`. See the migration-reset troubleshooting note in
+> [quickstart_for_mac.md](./quickstart_for_mac.md#troubleshooting) if you have an older
+> `db push`-created database.
 
 ### 7. Run Application
 

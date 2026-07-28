@@ -28,6 +28,13 @@ def serialize_w3c_ontology(data, fmt='turtle'):
     if data.get('version'):
         g.add((onto_uri, OWL.versionInfo, Literal(data['version'])))
 
+    # Stage 6 (extension & module handling): an extension module imports its core module.
+    # Core files never carry this — the one-way dependency (core never imports an extension)
+    # is enforced upstream in src/lib/promotion.ts; this just emits what promotion decided.
+    for imported_uri in (data.get('owlImports') or []):
+        if imported_uri:
+            g.add((onto_uri, OWL.imports, URIRef(imported_uri)))
+
     # Map concepts to URIs for quick lookup
     concept_uri_map = {}
     concepts = data.get('concepts', [])
@@ -41,6 +48,14 @@ def serialize_w3c_ontology(data, fmt='turtle'):
         c_uri = URIRef(c.get('uri') or f"{ns_uri}{label.replace(' ', '')}")
         concept_uri_map[c['id']] = c_uri
         concept_uri_map[label.lower()] = c_uri
+
+        # Stage 6 "patch" semantics: a concept marked external is referenced by this document
+        # (as a subClassOf/domain/range target) but already declared elsewhere — a TTL diff/
+        # patch must not re-assert an existing class as its own, only genuinely new ones.
+        # (Its attributes, if any were supplied, are still emitted below — that's how a merge's
+        # newly-added attributes on an already-existing concept get serialized.)
+        if c.get('external'):
+            continue
 
         g.add((c_uri, RDF.type, OWL.Class))
         g.add((c_uri, RDFS.label, Literal(label)))
