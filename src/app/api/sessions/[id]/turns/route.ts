@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { callLLMProvider, cleanAndParseJSON } from '@/lib/llm';
 import { getDomainProfileByKey, buildDomainPromptFragment } from '@/lib/domainProfiles';
-import { buildUpperOntologyPromptFragment, isValidUpperOntologyTag } from '@/lib/upperOntology';
+import { buildUpperOntologyPromptFragment, isValidUpperOntologyTag, isTagRootConcept } from '@/lib/upperOntology';
 import { embedText, buildConceptEmbeddingText, cosineSimilarity, isComparable } from '@/lib/embeddings';
 import { classifyBySimilarity, type DupStatus } from '@/lib/duplicateDetection';
 
@@ -16,15 +16,31 @@ const CONTEXT_TURN_LIMIT = 6;
  * there is no orphan-weaving mandate here — candidates may be extracted unconnected;
  * connectivity/parenting happens at promotion time (Stage 5), not extraction time.
  */
-function buildExtractionSystemPrompt(domainFragment: string, contextText: string): string {
+/** Lists the live graph so the model reuses existing classes/relationships instead of recreating them. */
+function buildExistingGraphFragment(
+  concepts: { label: string; conceptType: string }[],
+  rels: { name: string; source: { label: string } | null; target: { label: string } | null }[]
+): string {
+  if (!concepts.length && !rels.length) return '';
+  const MAX = 150;
+  const conceptLines = concepts.slice(0, MAX).map((c) => `- ${c.label} (${c.conceptType})`).join('\n');
+  const relLines = rels.slice(0, MAX).map((r) => `- ${r.source?.label ?? '?'} —${r.name}→ ${r.target?.label ?? '?'}`).join('\n');
+  return `CURRENT ONTOLOGY — these classes and relationships ALREADY EXIST. Do NOT propose a concept or relationship that is already here or an obvious synonym of one; reuse it instead. You MAY (and should) use these existing classes as the source/target of a NEW relationship.
+Existing classes:
+${conceptLines || '- (none yet)'}
+${relLines ? `Existing relationships:\n${relLines}\n` : ''}`;
+}
+
+function buildExtractionSystemPrompt(domainFragment: string, contextText: string, existingGraphFragment: string): string {
   return `You are the AI Ontology Modeling Assistant, extracting candidate concepts from a conversational ontology-modeling session.
 
 ${domainFragment}
 
-IMPORTANT: You are extracting CANDIDATES ONLY. These are proposals for a human ontologist to review, edit, merge, or reject later — nothing you output here is written directly to the live ontology graph. Only extract what is grounded in what the user actually said; do not invent unrelated business machinery to "complete" the model.
+IMPORTANT: You are extracting CANDIDATES ONLY. These are proposals for a human ontologist to review, edit, merge, or reject later — nothing you output here is written directly to the live ontology graph. Only extract what is grounded in what the user actually said; do not invent unrelated business machinery to "complete" the model. ALWAYS check the CURRENT ONTOLOGY list below first and reuse what already exists — only propose genuinely NEW classes and relationships.
 
 ${buildUpperOntologyPromptFragment()}
 
+${existingGraphFragment ? existingGraphFragment + '\n' : ''}
 ${contextText ? `RECENT CONVERSATION CONTEXT (oldest first):\n${contextText}\n` : ''}
 Extract candidate concepts, relationships, and attributes mentioned or implied by the LATEST user turn (given as the user message below). Use the conversation context only to resolve references (e.g. pronouns, "that process", concepts named in earlier turns) — do not re-extract things already fully covered by earlier turns unless the latest turn adds or changes something about them.
 
@@ -33,9 +49,10 @@ Return ONLY a single valid JSON object with this exact schema:
   "concepts": [
     {
       "label": "ConceptLabel",
-      "candidateType": "Entity|Metric|Process|Persona",
+      "candidateType": "Entity|Agent|Process|Event|Metric",
       "upperOntologyTag": "Entity|Event|Agent|Relation|Process|Quality",
-      "description": "Short description",
+      "description": "Short technical description",
+      "businessJustification": "One sentence: why this matters to the business (see rule 6)",
       "attributes": [
         { "name": "attrName", "datatype": "string|integer|float|boolean", "description": "description" }
       ]
@@ -45,12 +62,14 @@ Return ONLY a single valid JSON object with this exact schema:
     {
       "name": "relationshipName",
       "upperOntologyTag": "Entity|Event|Agent|Relation|Process|Quality",
-      "description": "Short description",
+      "description": "Short technical description",
+      "businessJustification": "One sentence: what this relationship means for the business (see rule 6)",
       "source": "SourceConceptLabel",
       "target": "TargetConceptLabel",
       "cardinality": "one-to-many"
     }
-  ]
+  ],
+  "reply": "A short conversational message to the user (see rule 6)."
 }
 
 Rules:
@@ -59,7 +78,9 @@ Rules:
 3. If the turn contains no extractable ontology content (e.g. small talk, a question back to the assistant, an out-of-scope request), return { "concepts": [], "relationships": [] }.
 4. Do NOT invent driver trees, causal cycles, or perspectives — they are out of scope for this extraction step.
 5. "upperOntologyTag" is REQUIRED on every concept and relationship, and MUST be exactly one of the six Layer 1 tags listed above — never a variant spelling, never a new tag. Most relationships should be tagged "Relation" unless they represent a workflow step ("Process") or a timed occurrence ("Event").
-6. Return ONLY the JSON object. Do not wrap it in markdown code blocks or add any other text.`;
+6. "businessJustification" is REQUIRED on every concept and relationship: a ONE-sentence business rationale — why this element belongs in the model and what it means for the organization — grounded only in what the user said. Make it business-oriented (the value/role it plays), not a restatement of the technical "description".
+7. "reply" is a conversational message to the user. In it: (a) name the concepts and relationships you extracted THIS turn and briefly say WHY each was created, grounded ONLY in what the user actually said; (b) then ask ONE focused follow-up question, or suggest a concrete direction to explore next (a related concept, a useful attribute, a missing process step). Keep it to 2–4 sentences, plain and specific — no bullet lists, no restating the JSON verbatim. If you extracted nothing this turn, do NOT invent anything: briefly say so and ask a short clarifying question instead.
+8. Return ONLY the JSON object. Do not wrap it in markdown code blocks or add any other text.`;
 }
 
 export async function POST(
@@ -114,15 +135,30 @@ export async function POST(
       .map((t) => `[${t.role}] ${t.content}`)
       .join('\n');
 
-    const systemPrompt = buildExtractionSystemPrompt(domainFragment, contextText);
+    // Give the agent the CURRENT ontology (this ontology + any imported base) so it reuses existing
+    // classes/relationships instead of recreating them. Tag-root anchors are excluded from the list.
+    const ont = await db.ontology.findUnique({ where: { id: session.ontologyId }, select: { id: true, extendsOntologyId: true } });
+    const familyIds = ont?.extendsOntologyId ? [session.ontologyId, ont.extendsOntologyId] : [session.ontologyId];
+    const [existingForPrompt, existingRelsForPrompt] = await Promise.all([
+      db.concept.findMany({ where: { ontologyId: { in: familyIds } }, select: { label: true, conceptType: true, typeFields: true }, orderBy: { label: 'asc' } }),
+      db.relationship.findMany({ where: { ontologyId: { in: familyIds } }, select: { name: true, source: { select: { label: true } }, target: { select: { label: true } } }, orderBy: { name: 'asc' } }),
+    ]);
+    const existingGraphFragment = buildExistingGraphFragment(
+      existingForPrompt.filter((c) => !isTagRootConcept(c)),
+      existingRelsForPrompt
+    );
+
+    const systemPrompt = buildExtractionSystemPrompt(domainFragment, contextText, existingGraphFragment);
 
     let extractedConcepts: any[] = [];
     let extractedRelationships: any[] = [];
+    let assistantReply = '';
     try {
       const reply = await callLLMProvider(systemPrompt, trimmedContent);
       const parsed = cleanAndParseJSON(reply);
       extractedConcepts = Array.isArray(parsed.concepts) ? parsed.concepts : [];
       extractedRelationships = Array.isArray(parsed.relationships) ? parsed.relationships : [];
+      assistantReply = typeof parsed.reply === 'string' ? parsed.reply.trim() : '';
     } catch (err: any) {
       // Non-destructive: the turn is already saved; just report zero candidates for this turn.
       return NextResponse.json({
@@ -215,6 +251,7 @@ export async function POST(
           payload: {
             kind: 'concept',
             description: concept.description || '',
+            businessJustification: concept.businessJustification || '',
             attributes: Array.isArray(concept.attributes) ? concept.attributes : [],
             ...(flag ? { upperOntologyTagFlag: flag } : {}),
             ...(dup.dupCheckFlag ? { dupCheckFlag: dup.dupCheckFlag } : {}),
@@ -238,6 +275,7 @@ export async function POST(
           payload: {
             kind: 'relationship',
             description: rel.description || '',
+            businessJustification: rel.businessJustification || '',
             source: rel.source,
             target: rel.target,
             cardinality: rel.cardinality || 'one-to-many',
@@ -257,6 +295,7 @@ export async function POST(
       turn,
       newCandidates,
       candidates: allCandidates,
+      reply: assistantReply,
     }, { status: 201 });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Failed to process turn' }, { status: 500 });

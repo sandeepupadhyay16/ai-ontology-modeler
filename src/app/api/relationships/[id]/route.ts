@@ -8,12 +8,13 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { name, description, cardinality } = body;
+    const { name, description, cardinality, businessJustification } = body;
 
     const data: any = {};
     if (name !== undefined) data.name = name.trim();
     if (description !== undefined) data.description = description;
     if (cardinality !== undefined) data.cardinality = cardinality;
+    if (businessJustification !== undefined) data.businessJustification = businessJustification || null;
 
     const relationship = await db.relationship.update({
       where: { id },

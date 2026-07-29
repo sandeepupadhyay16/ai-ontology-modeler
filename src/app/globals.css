@@ -281,6 +281,15 @@ button:disabled {
   font-weight: 700;
 }
 
+/* Spinner (used by inline `animation: spin ...` and the .spin utility) */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+
 /* Skeleton Loading Animations */
 @keyframes skeleton-pulse {
   0% { opacity: 0.6; }

@@ -8,12 +8,15 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { label, conceptType, typeFields, attributes } = body;
+    const { label, conceptType, typeFields, attributes, description, uri, businessJustification } = body;
 
     const data: any = {};
     if (label !== undefined) data.label = label.trim();
     if (conceptType !== undefined) data.conceptType = conceptType;
     if (typeFields !== undefined) data.typeFields = typeFields;
+    if (description !== undefined) data.description = description || null;
+    if (uri !== undefined) data.uri = uri || null;
+    if (businessJustification !== undefined) data.businessJustification = businessJustification || null;
 
     // Use a transaction to update concept and replace attributes
     const updatedConcept = await db.$transaction(async (tx: any) => {

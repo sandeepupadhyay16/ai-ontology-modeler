@@ -69,6 +69,7 @@ model Concept {
   uri                 String?
   label               String
   description         String? // Stage 5: populated at promotion from the candidate's payload description; enables label+type+description dedup embedding
+  businessJustification String? // V3: why this class exists in business terms (distinct from the technical `description`) — filled by the agent / editable, surfaced for org-shared reuse
   conceptType         String             @default("Entity")
   typeFields          Json?
   parentConceptId     String?
@@ -118,6 +119,7 @@ model Relationship {
   uri            String?
   name           String
   description    String?
+  businessJustification String? // V3: why this relationship exists / what it means for the business
   cardinality    String             @default("one-to-many")
   propertyType   String             @default("ObjectProperty")
   sourceId       String

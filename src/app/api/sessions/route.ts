@@ -2,6 +2,26 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { resolveDomainProfile } from '@/lib/domainProfiles';
 
+/**
+ * V3 "Open recent" support: the most recent modeling session per ontology, so the wizard can
+ * reopen an existing ontology (and its staging state) instead of only creating a new one.
+ */
+export async function GET() {
+  const sessions = await db.modelingSession.findMany({
+    orderBy: { startedAt: 'desc' },
+    take: 60,
+    include: { ontology: { select: { id: true, name: true, industry: true, businessFunction: true, moduleScope: true } } },
+  });
+  const seen = new Set<string>();
+  const latestPerOntology = [];
+  for (const s of sessions) {
+    if (seen.has(s.ontologyId)) continue;
+    seen.add(s.ontologyId);
+    latestPerOntology.push({ id: s.id, ontologyId: s.ontologyId, startedAt: s.startedAt, ontology: s.ontology });
+  }
+  return NextResponse.json({ sessions: latestPerOntology });
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();

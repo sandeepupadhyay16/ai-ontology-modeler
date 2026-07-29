@@ -40,7 +40,7 @@ import { db } from './db';
 import { embedText, buildConceptEmbeddingText, EMBEDDING_MODEL, EMBEDDING_DIM } from './embeddings';
 import { isValidUpperOntologyTag, TAG_ROOT_MARKER, type UpperOntologyTag } from './upperOntology';
 
-type Tx = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
+export type Tx = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 
 export interface PromotionError {
   candidateId: string;
@@ -114,7 +114,7 @@ async function resolveModuleOntology(
  * deterministic and auditable, not a guess: same tag, same module -> same
  * root, every time.
  */
-async function resolveTagRoot(tx: Tx, ontologyId: string, tag: UpperOntologyTag): Promise<string> {
+export async function resolveTagRoot(tx: Tx, ontologyId: string, tag: UpperOntologyTag): Promise<string> {
   const existing = await tx.concept.findFirst({
     where: { ontologyId, label: tag, parentConceptId: null, typeFields: { path: ['marker'], equals: TAG_ROOT_MARKER } },
   });
@@ -133,7 +133,7 @@ async function resolveTagRoot(tx: Tx, ontologyId: string, tag: UpperOntologyTag)
 }
 
 /** Enforces the one-way dependency: a concept in "core" may not attach under (or reference) a concept living in an extension. */
-function moduleAllowsReference(fromModuleScope: string, toModuleScope: string): boolean {
+export function moduleAllowsReference(fromModuleScope: string, toModuleScope: string): boolean {
   if (fromModuleScope === 'core' && toModuleScope !== 'core') return false;
   return true;
 }
