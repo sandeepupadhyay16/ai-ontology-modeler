@@ -1,5 +1,8 @@
 import { db } from '@/lib/db';
 import { weaveOrphanConcepts } from '@/lib/graphWeaver';
+import { cleanAndParseJSON, normalizeOntologyJSON, NormalizedOntology, formatCompressedState } from '@/lib/schemaNormalizer';
+import { detectDomainTaxonomies, formatTaxonomyGuidance } from '@/lib/domainTaxonomyRegistry';
+import { OntologyQualityReport, evaluateOntologyQuality } from '@/lib/qualityEvaluator';
 import http from 'http';
 import { setGlobalDispatcher, Agent } from 'undici';
 
@@ -24,21 +27,8 @@ export interface PipelineStageResult {
   durationMs: number;
 }
 
-export interface OntologyQualityReport {
-  healthScore: number; // 0 - 100
-  cqCoveragePercent: number;
-  orphanConceptCount: number;
-  conceptCount: number;
-  relationshipCount: number;
-  causalCycleCount: number;
-  issues: Array<{
-    severity: 'HIGH' | 'MEDIUM' | 'LOW';
-    code: string;
-    message: string;
-    autoFixable: boolean;
-    remediationAction?: any;
-  }>;
-}
+export type { OntologyQualityReport };
+export { evaluateOntologyQuality };
 
 // Low-level provider invocation
 export async function callLLMProvider(systemPrompt: string, userPrompt: string): Promise<string> {
@@ -70,7 +60,7 @@ export async function callLLMProvider(systemPrompt: string, userPrompt: string):
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.15,
-        max_tokens: 130000,
+        max_tokens: 25000,
       }),
     });
     if (!response.ok) {
@@ -78,7 +68,7 @@ export async function callLLMProvider(systemPrompt: string, userPrompt: string):
       throw new Error(`LM Studio returned an error: ${errText}`);
     }
     const data = await response.json();
-    return data.choices?.[0]?.message?.content || '';
+    return data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning_content || '';
   }
 
   if (provider === 'OPENAI') {
@@ -95,6 +85,7 @@ export async function callLLMProvider(systemPrompt: string, userPrompt: string):
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.15,
+        response_format: { type: 'json_object' },
       }),
     });
     if (!response.ok) {
@@ -183,31 +174,7 @@ export async function callLLMProvider(systemPrompt: string, userPrompt: string):
   throw new Error(`Unsupported provider: ${provider}`);
 }
 
-export function cleanAndParseJSON(reply: string): any {
-  let jsonString = reply.trim();
-  if (jsonString.includes('</think>')) {
-    const parts = jsonString.split('</think>');
-    jsonString = parts[parts.length - 1].trim();
-  } else if (jsonString.includes('<think>')) {
-    const startThink = jsonString.indexOf('<think>');
-    const endThink = jsonString.indexOf('</think>');
-    if (startThink !== -1 && endThink !== -1) {
-      jsonString = (jsonString.substring(0, startThink) + jsonString.substring(endThink + 8)).trim();
-    }
-  }
-  if (jsonString.includes('```')) {
-    const matches = jsonString.match(/```(?:json)?([\s\S]*?)```/);
-    if (matches && matches[1]) {
-      jsonString = matches[1].trim();
-    }
-  }
-  const firstBrace = jsonString.indexOf('{');
-  const lastBrace = jsonString.lastIndexOf('}');
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    jsonString = jsonString.substring(firstBrace, lastBrace + 1);
-  }
-  return JSON.parse(jsonString);
-}
+export { cleanAndParseJSON };
 
 // Stage 1: Requirements & Intent Parser
 export async function runIntentParser(prompt: string, ontologyContext: any) {
@@ -218,7 +185,10 @@ Analyze the user request within the context of:
 - Business Function: ${ontologyContext.businessFunction || 'General'}
 - AI Mission: ${ontologyContext.aiMissions?.join(', ') || 'Domain Expansion'}
 
-Output JSON specifying:
+CRITICAL RULES:
+1. NO INTERNAL REASONING: Do NOT emit internal thoughts, scratchpad monologue, or thinking tags (<think>...</think>).
+2. START IMMEDIATELY: Start on token 1 with the opening '{' brace.
+3. RAW JSON ONLY: Respond ONLY with a valid JSON object matching this schema:
 {
   "parsedIntent": "Clear executive summary of modeling intent",
   "targetIndustry": "Industry name",
@@ -228,9 +198,12 @@ Output JSON specifying:
   "isVague": false,
   "probingQuestions": []
 }`;
+
   try {
     const reply = await callLLMProvider(systemPrompt, prompt);
-    return cleanAndParseJSON(reply);
+    const parsed = cleanAndParseJSON(reply);
+    if (parsed && parsed.parsedIntent) return parsed;
+    throw new Error('Invalid intent parse');
   } catch (e) {
     return {
       parsedIntent: prompt,
@@ -248,39 +221,26 @@ Output JSON specifying:
 export async function runDomainTaxonomist(intentOutput: any, ontologyContext: any) {
   const contextStr = `${ontologyContext.name || ''} ${ontologyContext.industry || ''} ${ontologyContext.orgName || ''} ${ontologyContext.businessFunction || ''} ${intentOutput?.parsedIntent || ''}`.toLowerCase();
 
-  const isCart = contextStr.includes('car-t') || contextStr.includes('cart') || contextStr.includes('cell therapy') || contextStr.includes('leukapheresis') || contextStr.includes('vein-to-vein');
-  const isRwd = contextStr.includes('rwd') || contextStr.includes('real world') || contextStr.includes('evidence') || contextStr.includes('heor') || contextStr.includes('registry') || contextStr.includes('observational');
+  const detectedTaxonomies = detectDomainTaxonomies(contextStr);
+  const bestTaxonomy = detectedTaxonomies[0];
 
-  let taxonomyRules = `
+  let taxonomyRules = bestTaxonomy 
+    ? formatTaxonomyGuidance(bestTaxonomy)
+    : `
 ENTERPRISE TAXONOMY STANDARDS:
 - Standard Entities: Customer, Order, Product, Facility, Operator, System.
 - Standard Processes: OrderFulfillment, QualityAudit, InventoryReplenishment, SLACompliance.
 - Standard Metrics: CycleTime, DefectRate, Throughput, SLACompliancePercent.
 `;
 
-  if (isCart) {
-    taxonomyRules = `
-CAR-T CELL THERAPY TAXONOMY STANDARDS:
-- Standard Entities: Patient, LeukapheresisSample, CryoVial, CellBatch, InfusionKit, MedicalCenter.
-- Standard Processes: PatientSlotBooking, LeukapheresisHarvest, CryoTransit, TransductionAndExpansion, QualityReleaseTesting, PatientInfusion.
-- Standard Metrics: VeintoVeinCycleTime, CellViabilityRate, CryopreservationTempDelta, BatchSuccessRate.
-`;
-  } else if (isRwd) {
-    taxonomyRules = `
-REAL WORLD EVIDENCE (RWD / HEOR) TAXONOMY STANDARDS:
-- Standard Entities: PatientRegistry, EHRPipeline, ConsentRecord, ObservationalStudyProtocol, ClinicalDataset, OutcomeEndpoint.
-- Standard Processes: DataExtractionProcess, PatientConsentVerification, DataCurationProcess, HEORAnalysisProcess, StudyProtocolDrafting.
-- Standard Metrics: DataIngestionLatency, PatientEnrollmentCount, DataIntegrityScore, EvidenceGenerationCycleTime.
-`;
-  }
-
   const systemPrompt = `You are the Industry SME & Domain Taxonomist.
 Apply canonical industry standards to expand taxonomy requirements strictly aligned with the given domain topic.
 ${taxonomyRules}
 
-User Intent: ${JSON.stringify(intentOutput)}
-
-Output JSON:
+CRITICAL RULES:
+1. NO INTERNAL REASONING: Do NOT emit internal thoughts, scratchpad monologue, or thinking tags (<think>...</think>).
+2. START IMMEDIATELY: Start on token 1 with the opening '{' brace.
+3. RAW JSON ONLY: Respond ONLY with a valid JSON object matching this schema:
 {
   "domainTaxonomy": "Summary of taxonomy standards applied",
   "recommendedConcepts": ["Entity1", "Process1", "Metric1"],
@@ -292,183 +252,171 @@ Output JSON:
 
   try {
     const reply = await callLLMProvider(systemPrompt, `Generate domain taxonomy for intent: ${intentOutput.parsedIntent}`);
-    return cleanAndParseJSON(reply);
+    const parsed = cleanAndParseJSON(reply);
+    if (parsed && Array.isArray(parsed.recommendedConcepts)) return parsed;
+    throw new Error('Invalid taxonomy parse');
   } catch (e) {
+    if (bestTaxonomy) {
+      return {
+        domainTaxonomy: `${bestTaxonomy.name} Taxonomy Standard`,
+        recommendedConcepts: [
+          ...bestTaxonomy.entities.slice(0, 3),
+          ...bestTaxonomy.processes.slice(0, 2),
+          ...bestTaxonomy.metrics.slice(0, 2),
+        ],
+        standardCompetencyQuestions: bestTaxonomy.sampleCQs || [
+          'What is the overall operational cycle time?',
+          'Which quality checkpoints experience bottlenecks?',
+        ],
+      };
+    }
     return {
-      domainTaxonomy: isRwd ? 'Real World Evidence Taxonomy' : isCart ? 'CAR-T Logistics Taxonomy' : 'Enterprise Domain Taxonomy',
-      recommendedConcepts: isRwd 
-        ? ['PatientRegistry', 'EHRPipeline', 'DataCollectionProcess', 'DataIntegrityScore']
-        : isCart 
-        ? ['Patient', 'LeukapheresisSample', 'VeintoVeinCycleTime', 'CellViabilityRate']
-        : ['Customer', 'OrderProcess', 'CycleTime', 'DefectRate'],
-      standardCompetencyQuestions: isRwd
-        ? [
-            'What is the average data ingestion latency across FHIR EHR pipelines?',
-            'What percentage of enrolled registry patients have logged consent protocols?',
-          ]
-        : [
-            'What is the overall cycle time for processing requests?',
-            'Which quality checkpoints experience bottlenecks?',
-          ],
+      domainTaxonomy: 'Enterprise Domain Taxonomy',
+      recommendedConcepts: ['Customer', 'OrderProcess', 'CycleTime', 'DefectRate'],
+      standardCompetencyQuestions: [
+        'What is the overall cycle time for processing requests?',
+        'Which quality checkpoints experience bottlenecks?',
+      ],
     };
   }
 }
 
 // Stage 3: Semantic & Process Modeler (Multi-Agent Deep Decomposition)
-export async function runProcessModeler(intentOutput: any, taxonomyOutput: any, ontologyContext: any, currentState: any) {
+export async function runProcessModeler(intentOutput: any, taxonomyOutput: any, ontologyContext: any, currentState: any): Promise<NormalizedOntology> {
   const systemPrompt = `You are the Lead Enterprise Semantic & Business Process Modeler Agent.
-Your job is to build a deeply detailed, highly granular, fully connected enterprise domain ontology graph strictly tailored to the specific domain (e.g. Real World Evidence, Supply Chain, Logistics, or Finance).
+Your job is to generate a comprehensive, richly structured, fully connected domain ontology knowledge graph.
 
-STRICT DOMAIN ALIGNMENT MANDATE:
-- ONLY include concepts, personas, processes, metrics, and entities that are directly relevant to the user's specific domain.
-- Do NOT mix up unrelated domain concepts (e.g. do NOT include cell manufacturing / leukapheresis concepts in an RWD / Evidence ontology; do NOT include freight routing in a banking AML ontology).
-
-UNLIMITED EXPANSION MANDATE:
-- Do NOT limit the number of concepts or competency questions artificially. A complex business area requires thorough, multi-layered modeling.
-- You MUST create concepts across all canonical tiers:
-  1. Personas & Stakeholders (e.g. ClinicalResearcher, DataScientist, ComplianceAnalyst, Operator)
-  2. Core Entities (e.g. PatientRegistry, ClinicalDataset, EHRRecord, OrderContainer)
-  3. Operational Processes & Sub-processes (e.g. DataExtractionProcess, ProtocolApproval, SarFiling, QualityAudit)
-  4. Operational & Workflow Events (e.g. DataValidationEvent, AnomalyAlertEvent, PipelineSyncEvent)
-  5. Enterprise Systems & Data Sources (e.g. FHIREHRPipeline, AMLEngine, DataWarehouse)
-  6. Key Performance Indicators & Metrics (e.g. DataIngestionLatency, OverallCycleTime, DataIntegrityScore)
-
-MANDATORY CONNECTIVITY WEAVING:
-- EVERY single concept created MUST be connected via directional relationships (source -> target).
-- Zero orphan concepts allowed. Connect Personas -> Processes -> Entities -> Metrics -> Systems.
-- Use canonical relationship verbs: executes, produces, governedBy, monitors, calculates, integratesWith, populates.
-
-REQUIRED ATTRIBUTES:
-- Include 2-4 typed attributes for every entity/system concept (datatype: "string" | "float" | "integer" | "dateTime" | "boolean").
-
-Context:
+ONTOLOGY CONTEXT:
 - Industry: ${ontologyContext.industry}
-- Function: ${ontologyContext.businessFunction}
-- Intent: ${intentOutput.parsedIntent}
-- Taxonomy: ${JSON.stringify(taxonomyOutput)}
+- Business Function: ${ontologyContext.businessFunction}
+- Modeling Intent: ${intentOutput.parsedIntent}
+- Domain Taxonomy: ${JSON.stringify(taxonomyOutput.recommendedConcepts || [])}
 
-Return a complete, schema-compliant JSON object:
+COMPREHENSIVE MODELING MANDATE:
+1. MULTI-TIER COVERAGE: Create 10 to 18 granular, high-impact domain concepts spanning ALL enterprise tiers:
+   - Personas & Stakeholders (Actors executing tasks)
+   - Operational Processes & Sub-processes (Core workflows and activities)
+   - Core Entities & Master Data (Domain objects, assets, records)
+   - Enterprise Data Systems (Platforms, CRM, ERP, Data stores)
+   - Key Performance Indicators & Metrics (Operational and business KPIs)
+   - Workflow Events & Milestones (Triggers and alerts)
+2. 100% GRAPH CONNECTIVITY: Connect ALL concepts via directional relationships. Zero orphan concepts allowed.
+   - Personas -> executes -> Processes
+   - Processes -> produces/updates -> Entities
+   - Processes -> loggedInto/integratesWith -> Systems
+   - Metrics -> measures/evaluates -> Processes/Entities
+   - Events -> triggers -> Processes
+3. ATTRIBUTES: Provide 2 to 4 typed attributes per concept (datatype: "string" | "integer" | "float" | "dateTime" | "boolean").
+4. COMPETENCY QUESTIONS: Provide 3 to 5 realistic, domain-specific questions answerable by traversing the graph.
+5. DRIVER TREES: Include at least 1 Performance Driver Tree linking Metric concepts with polarity and weights.
+
+CRITICAL RULES (FOLLOW STRICTLY):
+1. NO INTERNAL REASONING OR MONOLOGUE: You MUST NOT emit internal reasoning, thinking monologue, chain-of-thought tokens, or scratchpad text (<think>...</think> or reasoning buffer). Commit directly to outputting valid JSON from token 1.
+2. IMMEDIATE COMMITMENT: Start your output immediately with the opening brace '{'.
+3. OUTPUT FORMAT: Respond ONLY with a single, valid JSON object. NEVER include markdown code fences, conversational preamble, thinking tags, or closing commentary.
+4. CONCISENESS: Keep each concept description under 20 words. Keep attribute descriptions under 8 words.
+5. UNIQUE LABELS: Every concept label MUST be unique and CamelCase.
+
+SCHEMA SPECIFICATION:
 {
   "concepts": [
     {
       "label": "ConceptName",
-      "conceptType": "Entity|Process|Metric|Persona|System|Event|DataSource",
-      "description": "Description text",
-      "attributes": [{ "name": "attr1", "datatype": "string", "required": true, "description": "desc" }]
+      "conceptType": "Entity" | "Process" | "Metric" | "Persona" | "System" | "Event" | "DataSource",
+      "description": "Clear domain description (under 20 words)",
+      "attributes": [
+        { "name": "fieldName", "datatype": "string", "description": "desc", "required": true }
+      ]
     }
   ],
   "relationships": [
     {
-      "name": "relationshipName",
-      "source": "SourceConceptLabel",
-      "target": "TargetConceptLabel",
-      "cardinality": "one-to-many"
+      "name": "executes" | "produces" | "governedBy" | "monitors" | "calculates" | "isAssociatedWith",
+      "source": "ExactSourceConceptLabel",
+      "target": "ExactTargetConceptLabel",
+      "cardinality": "one-to-many" | "one-to-one"
     }
   ],
   "competencyQuestions": [
-    { "question": "Detailed competency question?", "status": "Ratified" }
+    { "question": "Clear business question answerable by graph?", "status": "Ratified" }
   ],
   "driverTrees": [
     {
-      "name": "Main Performance Driver Tree",
-      "edges": [{ "name": "Drives (+1.0)", "source": "SrcMetric", "target": "TgtMetric" }]
+      "name": "Performance Driver Tree",
+      "edges": [
+        { "name": "Positively Drives (0.85)", "source": "SrcMetricLabel", "target": "TgtMetricLabel", "polarity": "+", "weight": 0.85 }
+      ]
     }
+  ]
+}
+
+CONCRETE EXAMPLE (abbreviated — your output should have 10-18 concepts):
+{
+  "concepts": [
+    { "label": "SalesRepresentative", "conceptType": "Persona", "description": "Field rep executing physician detailing visits", "attributes": [{"name": "repId", "datatype": "string", "description": "Unique rep ID", "required": true}, {"name": "territory", "datatype": "string", "description": "Assigned territory", "required": true}] },
+    { "label": "PhysicianDetailingVisit", "conceptType": "Process", "description": "Scheduled visit to present product data to prescriber", "attributes": [{"name": "visitDate", "datatype": "dateTime", "description": "Visit timestamp", "required": true}, {"name": "durationMinutes", "datatype": "integer", "description": "Visit length", "required": false}] },
+    { "label": "PrescriptionConversionRate", "conceptType": "Metric", "description": "Percentage of detailing visits resulting in new prescriptions", "attributes": [{"name": "currentValue", "datatype": "float", "description": "Current rate", "required": true}, {"name": "targetThreshold", "datatype": "float", "description": "Target KPI", "required": true}] }
   ],
-  "causalCycles": [
-    {
-      "name": "Operational Feedback Loop",
-      "cycleType": "REINFORCING",
-      "description": "Loop description",
-      "edges": [{ "source": "SrcMetric", "target": "TgtMetric" }]
-    }
+  "relationships": [
+    { "name": "executes", "source": "SalesRepresentative", "target": "PhysicianDetailingVisit", "cardinality": "one-to-many" },
+    { "name": "measures", "source": "PrescriptionConversionRate", "target": "PhysicianDetailingVisit", "cardinality": "one-to-one" }
+  ],
+  "competencyQuestions": [
+    { "question": "Which sales representatives have the highest prescription conversion rate this quarter?", "status": "Ratified" }
+  ],
+  "driverTrees": [
+    { "name": "Sales Performance", "edges": [{"name": "Positively Drives (0.9)", "source": "PrescriptionConversionRate", "target": "TerritoryRevenue", "polarity": "+", "weight": 0.9}] }
   ]
 }`;
 
-  const userPrompt = currentState && currentState.concepts?.length > 0
-    ? `Update the current ontology state incrementally:\n${JSON.stringify(currentState, null, 2)}`
-    : `Generate new complete ontology for intent: ${intentOutput.parsedIntent}`;
+  let userPrompt = `Generate new complete ontology for intent: ${intentOutput.parsedIntent}`;
+  if (currentState && currentState.concepts?.length > 0) {
+    const compressed = formatCompressedState(currentState);
+    userPrompt = `Update the current ontology state incrementally:\n${compressed}\n\nApply updates while preserving existing relevant concepts and relationships.`;
+  }
 
-  const reply = await callLLMProvider(systemPrompt, userPrompt);
-  const parsedJSON = cleanAndParseJSON(reply);
-  return weaveOrphanConcepts(parsedJSON);
+  try {
+    const reply = await callLLMProvider(systemPrompt, userPrompt);
+    const parsed = cleanAndParseJSON(reply);
+    let normalized = normalizeOntologyJSON(parsed);
+
+    // Quality retry if initial generation is sparse
+    if ((!normalized.concepts || normalized.concepts.length < 6 || !normalized.relationships || normalized.relationships.length < 4) && (!currentState || !currentState.concepts?.length)) {
+      console.warn(`Stage 3 initial generation sparse (${normalized.concepts?.length || 0} concepts). Retrying with emphasis...`);
+      const retrySystemPrompt = `${systemPrompt}\n\nCRITICAL ENFORCEMENT: Your previous response was too sparse. You MUST generate between 10 and 18 distinct concepts across all tiers with at least 10 relationships.`;
+      try {
+        const retryReply = await callLLMProvider(retrySystemPrompt, userPrompt);
+        const retryParsed = cleanAndParseJSON(retryReply);
+        const retryNormalized = normalizeOntologyJSON(retryParsed);
+        if (retryNormalized.concepts && retryNormalized.concepts.length >= (normalized.concepts?.length || 0)) {
+          normalized = retryNormalized;
+        }
+      } catch (retryErr: any) {
+        console.warn('Stage 3 retry encountered error, proceeding with initial parsed output:', retryErr.message);
+      }
+    }
+
+    if (!normalized.concepts || normalized.concepts.length === 0) {
+      throw new Error('No concepts extracted');
+    }
+
+    return weaveOrphanConcepts(normalized);
+  } catch (err: any) {
+    console.warn('Process Modeler generation failed, applying resilient fallback:', err.message);
+    const fallback = normalizeOntologyJSON({
+      concepts: (taxonomyOutput?.recommendedConcepts || ['CoreEntity', 'PrimaryProcess', 'PerformanceMetric']).map((label: string) => ({
+        label,
+        conceptType: label.includes('Process') ? 'Process' : label.includes('Metric') ? 'Metric' : 'Entity',
+        description: `Domain concept for ${label}`,
+      })),
+      relationships: [
+        { name: 'measuresPerformance', source: 'PerformanceMetric', target: 'PrimaryProcess', cardinality: 'one-to-one' },
+        { name: 'producesOutput', source: 'PrimaryProcess', target: 'CoreEntity', cardinality: 'one-to-many' }
+      ],
+      competencyQuestions: (taxonomyOutput?.standardCompetencyQuestions || ['What is the core cycle time?']).map((q: string) => ({ question: q, status: 'Ratified' })),
+      driverTrees: [],
+    });
+    return weaveOrphanConcepts(fallback);
+  }
 }
 
-// Stage 4: Quality & Logic Validator
-export function evaluateOntologyQuality(ontologyJSON: any): OntologyQualityReport {
-  const concepts = ontologyJSON.concepts || [];
-  const relationships = ontologyJSON.relationships || [];
-  const competencyQuestions = ontologyJSON.competencyQuestions || [];
-  const causalCycles = ontologyJSON.causalCycles || [];
-
-  const conceptLabels = new Set(concepts.map((c: any) => (c.label || '').trim().toLowerCase()));
-
-  // 1. Detect Orphan Concepts
-  const connectedLabels = new Set<string>();
-  for (const rel of relationships) {
-    if (rel.source) connectedLabels.add(rel.source.trim().toLowerCase());
-    if (rel.target) connectedLabels.add(rel.target.trim().toLowerCase());
-  }
-
-  const orphanConcepts = concepts.filter(
-    (c: any) => !connectedLabels.has((c.label || '').trim().toLowerCase())
-  );
-
-  // 2. CQ Coverage Calculation
-  let coveredCQs = 0;
-  for (const cq of competencyQuestions) {
-    const qLower = (cq.question || '').toLowerCase();
-    const matchesConcept = concepts.some((c: any) => qLower.includes((c.label || '').toLowerCase()));
-    if (matchesConcept) coveredCQs++;
-  }
-  const cqCoveragePercent = competencyQuestions.length > 0
-    ? Math.round((coveredCQs / competencyQuestions.length) * 100)
-    : 100;
-
-  // 3. Health Score Deduction
-  let healthScore = 100;
-  const issues: OntologyQualityReport['issues'] = [];
-
-  if (orphanConcepts.length > 0) {
-    const penalty = Math.min(25, orphanConcepts.length * 5);
-    healthScore -= penalty;
-    issues.push({
-      severity: orphanConcepts.length > 3 ? 'HIGH' : 'MEDIUM',
-      code: 'ORPHAN_NODES',
-      message: `Found ${orphanConcepts.length} unconnected concept(s): ${orphanConcepts.map((c: any) => c.label).slice(0, 4).join(', ')}`,
-      autoFixable: true,
-      remediationAction: 'CONNECT_ORPHANS',
-    });
-  }
-
-  if (cqCoveragePercent < 80) {
-    healthScore -= 15;
-    issues.push({
-      severity: 'MEDIUM',
-      code: 'LOW_CQ_COVERAGE',
-      message: `Competency question coverage is ${cqCoveragePercent}%. Some questions cannot be answered by graph pathways.`,
-      autoFixable: true,
-      remediationAction: 'ENRICH_CQ_CONCEPTS',
-    });
-  }
-
-  if (relationships.length === 0 && concepts.length > 1) {
-    healthScore -= 30;
-    issues.push({
-      severity: 'HIGH',
-      code: 'NO_RELATIONSHIPS',
-      message: 'No relationships defined between concepts in ontology.',
-      autoFixable: true,
-      remediationAction: 'GENERATE_RELATIONSHIPS',
-    });
-  }
-
-  return {
-    healthScore: Math.max(0, healthScore),
-    cqCoveragePercent,
-    orphanConceptCount: orphanConcepts.length,
-    conceptCount: concepts.length,
-    relationshipCount: relationships.length,
-    causalCycleCount: causalCycles.length,
-    issues,
-  };
-}

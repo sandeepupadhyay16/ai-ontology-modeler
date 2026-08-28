@@ -1,40 +1,34 @@
-export interface WovenOntology {
-  concepts: any[];
-  relationships: any[];
-  competencyQuestions: any[];
-  driverTrees: any[];
-  causalCycles?: any[];
-  perspectives?: any[];
-}
+import {
+  normalizeOntologyJSON,
+  normalizeAttributes,
+  inferDatatypeFromName,
+  NormalizedOntology,
+  NormalizedConcept,
+  NormalizedRelationship,
+} from '@/lib/schemaNormalizer';
+
+export type WovenOntology = NormalizedOntology;
 
 /**
  * Deterministic Graph Weaver Utility
  * Ensures 100% connectivity across all concepts in an ontology.
  * Auto-detects orphan nodes and infers semantic relationship links.
+ * Guarantees rich, valid typed attributes for every concept.
  */
-export function weaveOrphanConcepts(ontology: WovenOntology): WovenOntology {
-  if (!ontology || !Array.isArray(ontology.concepts)) {
-    return ontology;
-  }
+export function weaveOrphanConcepts(rawOntology: any): NormalizedOntology {
+  // First, normalize any model variance (unwrap roots, map string attrs, string CQs, synonyms)
+  const normalized = normalizeOntologyJSON(rawOntology);
 
-  const concepts = [...ontology.concepts];
-  const relationships = [...(ontology.relationships || [])];
-  const competencyQuestions = [...(ontology.competencyQuestions || [])];
-  const driverTrees = [...(ontology.driverTrees || [])];
-  const causalCycles = [...(ontology.causalCycles || [])];
-  const perspectives = [...(ontology.perspectives || [])];
+  const concepts = [...normalized.concepts];
+  const relationships = [...normalized.relationships];
+  const competencyQuestions = [...normalized.competencyQuestions];
+  const driverTrees = [...normalized.driverTrees];
+  const causalCycles = [...normalized.causalCycles];
+  const perspectives = [...normalized.perspectives];
 
   if (concepts.length === 0) {
-    return ontology;
+    return normalized;
   }
-
-  // Helper map for fast concept lookup
-  const conceptMap = new Map<string, any>();
-  concepts.forEach(c => {
-    if (c.label) {
-      conceptMap.set(c.label.trim().toLowerCase(), c);
-    }
-  });
 
   // Track connected concept labels (case-insensitive)
   const connectedLabels = new Set<string>();
@@ -48,7 +42,7 @@ export function weaveOrphanConcepts(ontology: WovenOntology): WovenOntology {
     c => c.label && !connectedLabels.has(c.label.trim().toLowerCase())
   );
 
-  // Group connected non-orphan concepts by type
+  // Group connected concepts by type
   const processes = concepts.filter(c => (c.conceptType || '').toLowerCase() === 'process');
   const entities = concepts.filter(c => (c.conceptType || '').toLowerCase() === 'entity');
   const metrics = concepts.filter(c => (c.conceptType || '').toLowerCase() === 'metric');
@@ -69,7 +63,14 @@ export function weaveOrphanConcepts(ontology: WovenOntology): WovenOntology {
     const sig = `${name.toLowerCase()}:${source.toLowerCase()}->${target.toLowerCase()}`;
     if (!existingRelSigs.has(sig)) {
       existingRelSigs.add(sig);
-      relationships.push({ name, source, target, cardinality });
+      relationships.push({
+        name,
+        source,
+        target,
+        description: `Auto-woven link: ${source} ${name} ${target}`,
+        cardinality,
+        propertyType: 'ObjectProperty',
+      });
       connectedLabels.add(source.toLowerCase());
       connectedLabels.add(target.toLowerCase());
     }
@@ -106,7 +107,6 @@ export function weaveOrphanConcepts(ontology: WovenOntology): WovenOntology {
         addRelationship('triggersProcessStep', orphanLabel, targetProc.label);
       }
     } else {
-      // Entity or generic concept
       const targetProc = processes[0] || entities.find(c => c.label !== orphanLabel) || concepts.find(c => c.label !== orphanLabel);
       if (targetProc) {
         addRelationship('isAssociatedWith', orphanLabel, targetProc.label);
@@ -145,27 +145,24 @@ export function weaveOrphanConcepts(ontology: WovenOntology): WovenOntology {
     ];
   };
 
-  const enrichedConcepts = concepts.map(c => {
+  const enrichedConcepts: NormalizedConcept[] = concepts.map(c => {
     const labelClean = (c.label || 'Concept').replace(/\s+/g, '');
     const uri = c.uri || `http://enterprise.org/ontologies/domain#${labelClean}`;
-    const existingAttrs = c.attributes || [];
-    const attrs = (!Array.isArray(existingAttrs) || existingAttrs.length === 0)
-      ? defaultAttributesForType(c.conceptType || 'Entity', c.label || 'Concept')
-      : existingAttrs;
 
-    const enrichedAttrs = attrs.map((a: any) => ({
-      ...a,
-      uri: a.uri || `http://enterprise.org/ontologies/domain#has${a.name ? a.name[0].toUpperCase() + a.name.slice(1) : 'Attribute'}`,
-    }));
+    // Normalize any existing attributes defensively (guaranteeing array of objects)
+    const normalizedAttrs = normalizeAttributes(c.attributes, c.label || 'Concept');
+    const finalAttrs = normalizedAttrs.length === 0
+      ? defaultAttributesForType(c.conceptType || 'Entity', c.label || 'Concept')
+      : normalizedAttrs;
 
     return {
       ...c,
       uri,
-      attributes: enrichedAttrs,
+      attributes: finalAttrs,
     };
   });
 
-  const enrichedRelationships = relationships.map((r: any) => ({
+  const enrichedRelationships: NormalizedRelationship[] = relationships.map(r => ({
     ...r,
     uri: r.uri || `http://enterprise.org/ontologies/domain#${r.name ? r.name.replace(/\s+/g, '') : 'rel'}`,
     propertyType: r.propertyType || 'ObjectProperty',

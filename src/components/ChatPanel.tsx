@@ -154,7 +154,9 @@ How can I help construct your domain graph today? You can choose a preset sugges
       finalPrompt = `User clarified the following details for prompt "${originalPrompt}":\n${formattedAnswers}\n\nPlease update the ontology graph based on these details.`;
     }
 
-    const newMessages: Message[] = [...messages, { role: 'user', content: answersObject ? 'Submitted domain clarifications.' : textToSend }];
+    const userMsg: Message = { role: 'user', content: answersObject ? 'Submitted domain clarifications.' : textToSend };
+    const assistantPlaceholderIndex = messages.length + 1;
+    const newMessages: Message[] = [...messages, userMsg, { role: 'assistant', content: '⏳ Initializing AI modeler...' }];
     setMessages(newMessages);
     if (!answersObject) setInput('');
     setLoading(true);
@@ -172,11 +174,58 @@ How can I help construct your domain graph today? You can choose a preset sugges
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to update ontology graph');
+        throw new Error(`Server returned HTTP ${res.status}`);
       }
 
-      const data = await res.json();
+      const reader = res.body?.getReader();
+      if (!reader) {
+        throw new Error('Failed to open response stream from server.');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let data: any = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          try {
+            const event = JSON.parse(trimmed.slice(5).trim());
+            if (event.type === 'status' || event.type === 'heartbeat') {
+              setMessages((prev) => {
+                const updated = [...prev];
+                if (updated[assistantPlaceholderIndex]) {
+                  updated[assistantPlaceholderIndex] = { role: 'assistant', content: event.message };
+                }
+                return updated;
+              });
+            } else if (event.type === 'probing') {
+              data = event;
+            } else if (event.type === 'complete') {
+              data = event;
+            } else if (event.type === 'error') {
+              throw new Error(event.error);
+            }
+          } catch (jsonErr: any) {
+            if (jsonErr.message && !jsonErr.message.includes('Unexpected token')) {
+              throw jsonErr;
+            }
+          }
+        }
+      }
+
+      if (!data) {
+        throw new Error('Stream ended without receiving final generation data.');
+      }
+
       setUndoStack((prev) => [...prev, { concepts, relationships, cqs }]);
 
       if (data.isVague && data.probingQuestions && data.probingQuestions.length > 0 && guidanceMode === 'INTERACTIVE') {
@@ -202,10 +251,27 @@ How can I help construct your domain graph today? You can choose a preset sugges
         botReply += `\n\n**Added Concepts (${data.createdConcepts.length})**: ${data.createdConcepts.map((c: any) => c.label).join(', ')}`;
       }
 
-      setMessages([...newMessages, { role: 'assistant', content: botReply }]);
+      setMessages((prev) => {
+        const updated = [...prev];
+        if (updated[assistantPlaceholderIndex]) {
+          updated[assistantPlaceholderIndex] = { role: 'assistant', content: botReply };
+        } else {
+          updated.push({ role: 'assistant', content: botReply });
+        }
+        return updated;
+      });
+
       await onGenerationComplete();
     } catch (e: any) {
-      setMessages([...newMessages, { role: 'assistant', content: `⚠️ Error: ${e.message}` }]);
+      setMessages((prev) => {
+        const updated = [...prev];
+        if (updated[assistantPlaceholderIndex]) {
+          updated[assistantPlaceholderIndex] = { role: 'assistant', content: `⚠️ Error: ${e.message}` };
+        } else {
+          updated.push({ role: 'assistant', content: `⚠️ Error: ${e.message}` });
+        }
+        return updated;
+      });
     } finally {
       setLoading(false);
       if (typeof finishStepper === 'function') {

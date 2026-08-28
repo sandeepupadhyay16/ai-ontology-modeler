@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
+
 async function callLLMProvider(systemPrompt: string, userPrompt: string): Promise<string> {
   const activeConfig = await db.llmConfiguration.findFirst({
     where: { isActive: true },
@@ -28,7 +31,8 @@ async function callLLMProvider(systemPrompt: string, userPrompt: string): Promis
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        temperature: 0.15
+        temperature: 0.15,
+        max_tokens: 25000,
       }),
     });
     if (!response.ok) {
@@ -36,7 +40,7 @@ async function callLLMProvider(systemPrompt: string, userPrompt: string): Promis
       throw new Error(`LM Studio returned an error: ${errText}`);
     }
     const data = await response.json();
-    return data.choices?.[0]?.message?.content || '';
+    return data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning_content || '';
   }
 
   if (provider === 'OPENAI') {
@@ -206,10 +210,10 @@ ${cartInstruction}
 Do NOT generate generic goals like "Increase efficiency" or "Boost sales".
 Refuse generic phrasing. Instead, generate target-driven business objectives or AI agent missions tailored to this vertical (e.g., "Maximize formulary approval velocity for therapeutic launches" or "Automate clinical trial cohort mismatch detection").
 
-You must return a valid JSON object containing:
-1. "objectives": An array of exactly 4 strings, where each string represents a specific business objective or AI mission.
-
-Respond with ONLY a JSON object in this format:
+CRITICAL RULES:
+1. NO INTERNAL REASONING: Do NOT emit internal thoughts, scratchpad monologue, or thinking tags (<think>...</think>).
+2. START IMMEDIATELY: Start on token 1 with the opening '{' brace.
+3. RAW JSON ONLY: Respond with ONLY a valid JSON object containing an array of exactly 4 strings in this format:
 {
   "objectives": [
     "Objective 1",

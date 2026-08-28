@@ -50,6 +50,20 @@ def parse_rdf(file_path, fmt=None):
     concepts_dict = {}
     relationships = []
 
+    def infer_concept_type(label, slug):
+        text = f"{label} {slug}".lower()
+        if any(w in text for w in ['process', 'activity', 'workflow', 'review', 'detailing', 'collection', 'infusion', 'transit', 'scheduling']):
+            return 'Process'
+        if any(w in text for w in ['persona', 'stakeholder', 'representative', 'specialist', 'physician', 'professional', 'practitioner', 'nurse', 'clinician', 'doctor', 'payer', 'pbm', 'auditor', 'coordinator', 'patient', 'kol']):
+            return 'Persona'
+        if any(w in text for w in ['system', 'platform', 'crm', 'erp', 'tracker', 'database', 'channel', 'promomats']):
+            return 'System'
+        if any(w in text for w in ['metric', 'kpi', 'rate', 'score', 'decile', 'index', 'volume', 'cycletime', 'amount']):
+            return 'Metric'
+        if any(w in text for w in ['event', 'alert', 'milestone', 'record', 'disbursement', 'transfer']):
+            return 'Event'
+        return 'Entity'
+
     # 2. Extract OWL/RDFS Classes & SKOS Concepts
     classes = list(g.subjects(RDF.type, OWL.Class)) + list(g.subjects(RDF.type, RDFS.Class))
     for c in classes:
@@ -57,15 +71,23 @@ def parse_rdf(file_path, fmt=None):
         if isinstance(c, URIRef) and uri_str not in concepts_dict:
             label = g.value(c, RDFS.label)
             comment = g.value(c, RDFS.comment)
-            parent = g.value(c, RDFS.subClassOf)
-            
             slug = get_local_name(uri_str)
+            
+            parent_uris = []
+            for p in g.objects(c, RDFS.subClassOf):
+                if isinstance(p, URIRef) and str(p) != uri_str and str(p) != str(OWL.Thing):
+                    parent_uris.append(str(p))
+            
+            primary_parent = parent_uris[0] if parent_uris else None
+            lbl_str = str(label) if label else slug
+            
             concepts_dict[uri_str] = {
                 "uri": uri_str,
-                "label": str(label) if label else slug,
+                "label": lbl_str,
                 "description": str(comment) if comment else "",
-                "concept_type": "Entity",
-                "parent_uri": str(parent) if parent and isinstance(parent, URIRef) else None,
+                "concept_type": infer_concept_type(lbl_str, slug),
+                "parent_uri": primary_parent,
+                "parent_uris": parent_uris,
                 "attributes": []
             }
 
@@ -79,14 +101,23 @@ def parse_rdf(file_path, fmt=None):
         if isinstance(c, URIRef) and uri_str not in concepts_dict:
             pref = g.value(c, SKOS_PREF_LABEL) or g.value(c, RDFS.label)
             comment = g.value(c, RDFS.comment)
-            broader = g.value(c, SKOS_BROADER)
             slug = get_local_name(uri_str)
+            
+            parent_uris = []
+            for p in g.objects(c, SKOS_BROADER):
+                if isinstance(p, URIRef) and str(p) != uri_str:
+                    parent_uris.append(str(p))
+            
+            primary_parent = parent_uris[0] if parent_uris else None
+            lbl_str = str(pref) if pref else slug
+            
             concepts_dict[uri_str] = {
                 "uri": uri_str,
-                "label": str(pref) if pref else slug,
+                "label": lbl_str,
                 "description": str(comment) if comment else "",
-                "concept_type": "Entity",
-                "parent_uri": str(broader) if broader and isinstance(broader, URIRef) else None,
+                "concept_type": infer_concept_type(lbl_str, slug),
+                "parent_uri": primary_parent,
+                "parent_uris": parent_uris,
                 "attributes": []
             }
 
@@ -132,6 +163,23 @@ def parse_rdf(file_path, fmt=None):
                 "cardinality": "one-to-many",
                 "property_type": "ObjectProperty"
             })
+
+    # 5. Extract Taxonomic subClassOf / Broader Relationships into visible graph edges
+    existing_pairs = {(r["source_uri"], r["target_uri"], r["name"]) for r in relationships}
+    for c_uri, c_data in concepts_dict.items():
+        for p_uri in c_data.get("parent_uris", []):
+            if p_uri in concepts_dict and (c_uri, p_uri, "subClassOf") not in existing_pairs:
+                parent_label = concepts_dict[p_uri]["label"]
+                relationships.append({
+                    "uri": f"{c_uri}#subClassOf#{p_uri}",
+                    "name": "subClassOf",
+                    "description": f"{c_data['label']} is a specialization/subclass of {parent_label}",
+                    "source_uri": c_uri,
+                    "target_uri": p_uri,
+                    "cardinality": "many-to-one",
+                    "property_type": "ObjectProperty"
+                })
+                existing_pairs.add((c_uri, p_uri, "subClassOf"))
 
     return {
         "name": get_local_name(ontology_uri),

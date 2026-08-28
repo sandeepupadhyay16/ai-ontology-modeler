@@ -17,7 +17,14 @@ setGlobalDispatcher(new Agent({
 }));
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  allowedDevOrigins: [
+    'ontm.sandeepupadhyay.dev',
+    '*.sandeepupadhyay.dev',
+    'sandeepupadhyay.dev',
+    'localhost:3014',
+    '127.0.0.1:3014',
+    '192.168.1.141:3014'
+  ],
 };
 
 export default nextConfig;

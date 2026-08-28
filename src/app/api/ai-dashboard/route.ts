@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { cleanAndParseJSON } from '@/lib/schemaNormalizer';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 async function callLLMProvider(systemPrompt: string, userPrompt: string): Promise<string> {
   const activeConfig = await db.llmConfiguration.findFirst({
@@ -28,7 +32,8 @@ async function callLLMProvider(systemPrompt: string, userPrompt: string): Promis
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        temperature: 0.15
+        temperature: 0.15,
+        max_tokens: 25000,
       }),
     });
     if (!response.ok) {
@@ -36,7 +41,7 @@ async function callLLMProvider(systemPrompt: string, userPrompt: string): Promis
       throw new Error(`LM Studio returned an error: ${errText}`);
     }
     const data = await response.json();
-    return data.choices?.[0]?.message?.content || '';
+    return data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning_content || '';
   }
 
   if (provider === 'OPENAI') {
@@ -155,69 +160,6 @@ async function callLLMProvider(systemPrompt: string, userPrompt: string): Promis
   throw new Error(`Unsupported provider: ${provider}`);
 }
 
-function cleanAndParseJSON(reply: string, fallbackData: any): any {
-  let jsonString = reply.trim();
-  console.log("--- RAW LLM REPLY RECEIVED ---");
-  console.log(jsonString);
-  console.log("------------------------------");
-
-  try {
-    // Strip thinking tags if present in reasoning models (e.g. <think>...</think>)
-    if (jsonString.includes('</think>')) {
-      const parts = jsonString.split('</think>');
-      jsonString = parts[parts.length - 1].trim();
-    } else if (jsonString.includes('<think>')) {
-      const startThink = jsonString.indexOf('<think>');
-      const endThink = jsonString.indexOf('</think>');
-      if (startThink !== -1 && endThink !== -1) {
-        jsonString = (jsonString.substring(0, startThink) + jsonString.substring(endThink + 8)).trim();
-      }
-    }
-    
-    // Clean markdown code blocks if present
-    if (jsonString.includes('```')) {
-      const matches = jsonString.match(/```(?:json)?([\s\S]*?)```/);
-      if (matches && matches[1]) {
-        jsonString = matches[1].trim();
-      }
-    }
-    
-    const firstBrace = jsonString.indexOf('{');
-    const lastBrace = jsonString.lastIndexOf('}');
-    if (firstBrace !== -1) {
-      if (lastBrace !== -1 && lastBrace > firstBrace) {
-        jsonString = jsonString.substring(firstBrace, lastBrace + 1);
-      } else {
-        jsonString = jsonString.substring(firstBrace);
-        let openBraces = 0;
-        let openBrackets = 0;
-        for (let i = 0; i < jsonString.length; i++) {
-          if (jsonString[i] === '{') openBraces++;
-          else if (jsonString[i] === '}') openBraces--;
-          else if (jsonString[i] === '[') openBrackets++;
-          else if (jsonString[i] === ']') openBrackets--;
-        }
-        while (openBrackets > 0) {
-          jsonString += ']';
-          openBrackets--;
-        }
-        while (openBraces > 0) {
-          jsonString += '}';
-          openBraces--;
-        }
-      }
-    }
-
-    // Resilience fixes for common local LLM syntax slip-ups
-    // Remove trailing commas before closing braces/brackets
-    jsonString = jsonString.replace(/,\s*([\]}])/g, '$1');
-    
-    return JSON.parse(jsonString);
-  } catch (e: any) {
-    console.error("JSON Parsing failed! Using fallback data. Error was:", e.message);
-    return fallbackData;
-  }
-}
 
 export async function POST(req: Request) {
   try {
@@ -802,21 +744,10 @@ COMPREHENSIVENESS REQUIREMENT:
 Do NOT suggest generic or vanilla items (e.g. do not just suggest generic "Sales Lead Capture" or "Optimize Operations").
 Instead, suggest specialized clinical/industry-specific items.
 
-You must return a valid JSON object (with no additional explanation or markdown blocks unless it is raw JSON text) containing:
-1. "processes": A list of proposed business process steps, where each step has:
-    - "name": string (domain-specific name, e.g. "Physician Detailing")
-    - "description": string (tailored to this industry)
-    - "children": A list of sub-processes, each having "name" and "description". Keep it to 1 level of sub-processes.
-2. "projects": A list of projects to run under this business function to map/operationalize this ontology, where each project has:
-    - "name": string (e.g. "Commercial Physician Engagement Ontology")
-    - "description": string (tailored to this industry)
-3. "objectives": A list of proposed business objectives / AI missions, where each has:
-    - "name": string (e.g. "Maximize Formulary Inclusion Velocity")
-    - "description": string (brief description of the goal)
-    - "level": string ("ORGANIZATION", "FUNCTION", or "PROCESS")
-    - "processName": string (optional, the name of the process from the "processes" list that it aligns to)
-
-Respond with ONLY a JSON object in this format:
+CRITICAL RULES:
+1. NO INTERNAL REASONING: Do NOT emit internal thoughts, scratchpad monologue, or thinking tags (<think>...</think>).
+2. START IMMEDIATELY: Start on token 1 with the opening '{' brace.
+3. RAW JSON ONLY: Respond with ONLY a valid JSON object (with no additional explanation, commentary, or markdown fences) matching this schema:
 {
   "processes": [
     {

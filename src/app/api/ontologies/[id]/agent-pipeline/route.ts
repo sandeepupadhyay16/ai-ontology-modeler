@@ -5,8 +5,11 @@ import {
   runDomainTaxonomist,
   runProcessModeler,
   evaluateOntologyQuality,
-  cleanAndParseJSON,
 } from '@/lib/agentPipeline';
+import { normalizeOntologyJSON, inferDatatypeFromName } from '@/lib/schemaNormalizer';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 export async function POST(
   request: Request,
@@ -72,7 +75,8 @@ export async function POST(
 
     // Stage 3: Semantic & Process Modeler
     const t3 = Date.now();
-    const modeledJSON = await runProcessModeler(intentOutput, taxonomyOutput, ontologyContext, currentState);
+    const rawModeled = await runProcessModeler(intentOutput, taxonomyOutput, ontologyContext, currentState);
+    const modeledJSON = normalizeOntologyJSON(rawModeled);
     const d3 = Date.now() - t3;
 
     // Stage 4: Quality & Logic Validator
@@ -97,9 +101,20 @@ export async function POST(
       const newConceptIds: string[] = [];
 
       for (const concept of concepts) {
-        if (!concept.label) continue;
-        const cleanLabel = concept.label.trim();
+        if (!concept || !concept.label) continue;
+        const cleanLabel = String(concept.label).trim();
+        if (!cleanLabel) continue;
         const conceptType = concept.conceptType || 'Entity';
+
+        const normalizedAttrs = Array.isArray(concept.attributes)
+          ? concept.attributes.map((attr: any) => {
+              const name = typeof attr === 'string' ? attr.trim() : String(attr?.name || attr?.attributeName || '').trim();
+              const datatype = typeof attr === 'object' && attr?.datatype ? attr.datatype : inferDatatypeFromName(name);
+              const description = typeof attr === 'object' && attr?.description ? attr.description : '';
+              const required = typeof attr === 'object' ? !!attr.required : false;
+              return { name, datatype, description, required };
+            }).filter(a => Boolean(a.name))
+          : [];
 
         let dbConcept = await tx.concept.findFirst({
           where: { label: cleanLabel, ontologyId },
@@ -113,12 +128,7 @@ export async function POST(
               typeFields: concept.typeFields || {},
               ontologyId,
               attributes: {
-                create: (concept.attributes || []).map((attr: any) => ({
-                  name: attr.name.trim(),
-                  datatype: attr.datatype || 'string',
-                  description: attr.description || '',
-                  required: !!attr.required,
-                })),
+                create: normalizedAttrs,
               },
             },
           });
@@ -131,13 +141,10 @@ export async function POST(
 
         // Replace attributes
         await tx.attribute.deleteMany({ where: { conceptId: dbConcept.id } });
-        if (concept.attributes && concept.attributes.length > 0) {
+        if (normalizedAttrs.length > 0) {
           await tx.attribute.createMany({
-            data: concept.attributes.map((attr: any) => ({
-              name: attr.name.trim(),
-              datatype: attr.datatype || 'string',
-              description: attr.description || '',
-              required: !!attr.required,
+            data: normalizedAttrs.map(attr => ({
+              ...attr,
               conceptId: dbConcept.id,
             })),
           });
@@ -147,10 +154,12 @@ export async function POST(
         newConceptIds.push(dbConcept.id);
       }
 
-      // Delete concepts omitted in full sync
-      await tx.concept.deleteMany({
-        where: { ontologyId, id: { notIn: newConceptIds } },
-      });
+      // Delete concepts omitted in full sync (only if new concepts were created)
+      if (newConceptIds.length > 0) {
+        await tx.concept.deleteMany({
+          where: { ontologyId, id: { notIn: newConceptIds } },
+        });
+      }
 
       // 2. Sync Relationships
       await tx.relationship.deleteMany({ where: { ontologyId } });
@@ -158,12 +167,12 @@ export async function POST(
       const connectedConceptIds = new Set<string>();
 
       for (const rel of relationships) {
-        if (!rel.name || !rel.source || !rel.target) continue;
+        if (!rel || !rel.name || !rel.source || !rel.target) continue;
         const src = findConceptByLabel(rel.source, labelToConcept);
         const tgt = findConceptByLabel(rel.target, labelToConcept);
         if (src && tgt) {
           const relData: any = {
-            name: rel.name.trim(),
+            name: String(rel.name).trim(),
             description: rel.description || '',
             cardinality: rel.cardinality || 'one-to-many',
             sourceId: src.id,
@@ -202,31 +211,35 @@ export async function POST(
         }
       }
 
-      // 3. Sync Competency Questions
+      // 3. Sync Competency Questions (Defensive string & object handling)
       await tx.competencyQuestion.deleteMany({ where: { ontologyId } });
+      let cqCount = 0;
       for (const cq of competencyQuestions) {
-        if (!cq.question) continue;
+        if (!cq) continue;
+        const qText = String((cq as any)?.question || (cq as any)?.text || cq || '').trim();
+        if (!qText) continue;
         await tx.competencyQuestion.create({
           data: {
-            question: cq.question.trim(),
-            status: cq.status || 'Ratified',
-            remediation: cq.remediation || '',
+            question: qText,
+            status: (cq as any)?.status || 'Ratified',
+            remediation: (cq as any)?.remediation || '',
             ontologyId,
           },
         });
+        cqCount++;
       }
 
       // 4. Sync Driver Trees & Edges
       await tx.driverTree.deleteMany({ where: { ontologyId } });
       for (const tree of driverTrees) {
-        if (!tree.name) continue;
+        if (!tree || !tree.name) continue;
         const dbTree = await tx.driverTree.create({
-          data: { name: tree.name.trim(), ontologyId },
+          data: { name: String(tree.name).trim(), ontologyId },
         });
         for (const edge of (tree.edges || [])) {
-          if (!edge.source || !edge.target) continue;
-          const src = labelToConcept[edge.source.trim()];
-          const tgt = labelToConcept[edge.target.trim()];
+          if (!edge || !edge.source || !edge.target) continue;
+          const src = labelToConcept[String(edge.source).trim()];
+          const tgt = labelToConcept[String(edge.target).trim()];
           if (src && tgt) {
             await tx.driverEdge.create({
               data: {
@@ -234,6 +247,8 @@ export async function POST(
                 sourceId: src.id,
                 targetId: tgt.id,
                 treeId: dbTree.id,
+                polarity: edge.polarity || '+',
+                weight: typeof edge.weight === 'number' ? edge.weight : 1.0,
               },
             });
           }
@@ -243,7 +258,7 @@ export async function POST(
       return {
         conceptCount: newConceptIds.length,
         relationshipCount: relCount,
-        cqCount: competencyQuestions.length,
+        cqCount,
       };
     });
     const d5 = Date.now() - t5;
@@ -262,6 +277,7 @@ export async function POST(
       summary,
     });
   } catch (error: any) {
+    console.error("agent-pipeline error:", error);
     return NextResponse.json({ error: error.message || 'Agent pipeline execution failed' }, { status: 500 });
   }
 }
@@ -281,7 +297,7 @@ function findConceptByLabel(rawLabel: string, labelToConcept: Record<string, any
   }
 
   const removePrefix = (s: string) => {
-    return s.replace(/^\[(job|outcome|metric|process|entity|persona)\]\s*/i, '').trim();
+    return s.replace(/^\[(job|outcome|metric|process|entity|persona|system|event)\]\s*/i, '').trim();
   };
 
   const cleanNoPrefix = removePrefix(clean);
